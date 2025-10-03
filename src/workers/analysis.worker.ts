@@ -70,14 +70,16 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         await Promise.all([getFfmpeg(), loadCv()]);
 
         postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Preparing video file...', id } });
-        await ffmpeg!.writeFile('input.vid', await fetchFile(file));
+        const ffmpegInstance = await getFfmpeg();
+        await ffmpegInstance.writeFile('input.vid', await fetchFile(file));
 
         // Get video dimensions
         const infoCmd = ['-i', 'input.vid', '-hide_banner'];
         let infoStr = '';
-        ffmpeg!.on('log', ({ message }) => { infoStr += message + '\n'; });
-        await ffmpeg!.exec(infoCmd);
-        ffmpeg!.on('log', () => {}); // Clear logger
+        const infoLogger = ({ message }: { message: string }) => { infoStr += message + '\n'; };
+        ffmpegInstance.on('log', infoLogger);
+        await ffmpegInstance.exec(infoCmd);
+        ffmpegInstance.off('log', infoLogger); // Clear logger
         
         // FIX: Replaced fragile regex with a more robust one to correctly parse video dimensions from ffmpeg's output.
         const dimMatch = infoStr.match(/Stream.*Video:.*,.*?(\d{2,5})x(\d{2,5})/);
@@ -89,15 +91,15 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         const FPS = 12;
         const ANALYSIS_WIDTH = 320;
         const command = ['-i', 'input.vid', '-vf', `fps=${FPS},scale=${ANALYSIS_WIDTH}:-1`, '-q:v', '5', 'frame-%04d.jpg'];
-        await ffmpeg!.exec(command);
+        await ffmpegInstance.exec(command);
         
-        const frameFiles = (await ffmpeg!.listDir('.')).filter(f => f.name.startsWith('frame-') && f.name.endsWith('.jpg')).map(f => f.name).sort();
+        const frameFiles = (await ffmpegInstance.listDir('.')).filter(f => f.name.startsWith('frame-') && f.name.endsWith('.jpg')).map(f => f.name).sort();
         
         const frameData = [];
         for (let i = 0; i < frameFiles.length; i++) {
             postMessage({ type: 'PROGRESS', payload: { progress: 20 + 40 * (i / frameFiles.length), message: `Processing frame ${i+1}/${frameFiles.length}`, id } });
             const frameName = frameFiles[i];
-            const fileData = await ffmpeg!.readFile(frameName);
+            const fileData = await ffmpegInstance.readFile(frameName);
             const img = cv.imdecode(new Uint8Array(fileData as ArrayBuffer), cv.IMREAD_COLOR);
             const gray = new cv.Mat();
             cv.cvtColor(img, gray, cv.COLOR_RGBA2GRAY);
@@ -160,8 +162,8 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         
         // Cleanup
         frameData.forEach(data => { data.gray.delete(); data.hist.delete(); });
-        for (const f of frameFiles) await ffmpeg!.deleteFile(f);
-        await ffmpeg!.deleteFile('input.vid');
+        for (const f of frameFiles) await ffmpegInstance.deleteFile(f);
+        await ffmpegInstance.deleteFile('input.vid');
 
         const result: AnalysisResult = {
             candidates: topCandidates,

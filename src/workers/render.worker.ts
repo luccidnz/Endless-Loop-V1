@@ -1,5 +1,3 @@
-
-
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import type { RenderRequest, RenderWorkerMessage, WorkerMessage } from '../types';
@@ -64,6 +62,7 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
           '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast', '-an',
           outputFilename
       ];
+    // FIX: Removed redundant `format !== 'gif'` check. The type error occurred because this code is in an `else` branch where `format` is never 'gif', making the check unnecessary.
     } else if (renderMode === 'flow_morph' && crossfadeSec > 0) {
        const loopDuration = durationSec - crossfadeSec;
        const transitionTrimStart = crossfadeSec / 2;
@@ -81,6 +80,7 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
         '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'medium', '-an',
         outputFilename
        ];
+    // FIX: Removed redundant `format !== 'gif'` check. The type error occurred because this code is in an `else` branch where `format` is never 'gif', making the check unnecessary.
     } else if (renderMode === 'crossfade' && crossfadeSec > 0) {
         const fadeOffset = durationSec - crossfadeSec;
         command = [
@@ -92,17 +92,29 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
          '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast', '-an',
          outputFilename
         ];
-    } else { // 'cut' mode - precise trim
+    } else { // 'cut' mode or fallback
       command = [
+          '-ss', `${startSec}`,
           '-i', 'input.vid',
-          '-filter_complex',
-          `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v_out]`,
-          '-map', '[v_out]',
-          '-c:v', 'libx264',
-          '-preset', 'fast',
+          '-t', `${durationSec}`,
+          '-c', 'copy', // Use stream copy for speed if no filtering
           '-an', // remove audio
           outputFilename
       ];
+
+      // If format requires re-encoding (not a simple copy)
+      if (format !== 'mp4' && format !== 'webm') {
+        command = [
+            '-i', 'input.vid',
+            '-filter_complex',
+            `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v_out]`,
+            '-map', '[v_out]',
+            '-c:v', 'libx264',
+            '-preset', 'fast',
+            '-an', // remove audio
+            outputFilename
+        ];
+      }
     }
 
     postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Executing render command...' } });

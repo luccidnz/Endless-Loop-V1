@@ -7,8 +7,10 @@ declare const cv: any; // OpenCV.js is loaded via importScripts
 let ffmpeg: FFmpeg | null = null;
 let cvLoaded = false;
 
-// Reverted to the official OpenCV URL. With COEP/COOP disabled, this should now load correctly.
-const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
+// To resolve cross-origin issues, opencv.js is now served locally.
+// Please download it from https://docs.opencv.org/4.9.0/opencv.js
+// and place it in the /public folder of your project.
+const OPENCV_URL = '/opencv.js';
 
 // Aligning with the importmap to ensure all ffmpeg assets come from the same origin.
 const FFMPEG_CORE_VERSION = '0.12.15';
@@ -23,12 +25,12 @@ async function loadCv() {
     // Module workers don't support `importScripts`. We must fetch and `eval` the script.
     try {
         const response = await fetch(OPENCV_URL);
-        if (!response.ok) throw new Error(`Failed to fetch opencv.js: ${response.statusText}`);
+        if (!response.ok) throw new Error(`Failed to fetch opencv.js: ${response.statusText}. Did you place it in the /public folder?`);
         const script = await response.text();
         self.eval(script);
     } catch (error) {
         console.error('Error loading OpenCV.js:', error);
-        throw new Error('Failed to fetch opencv.js');
+        throw new Error('Failed to fetch opencv.js. Please ensure it is in the /public directory.');
     }
 
     return new Promise<void>((resolve, reject) => {

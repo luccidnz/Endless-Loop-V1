@@ -1,6 +1,3 @@
-// FIX: Add triple-slash directive to include Vite's client types and resolve import.meta.env error.
-/// <reference types="vite/client" />
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { FileDropzone } from './components/FileDropzone';
 import { PreviewPlayer } from './components/PreviewPlayer';

@@ -1,4 +1,3 @@
-
 /// <reference lib="webworker" />
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
@@ -86,12 +85,12 @@ self.onmessage = async (event: MessageEvent<{ file: File }>) => {
             const frameNumber = i.toString().padStart(4, '0');
             const frameData = await ffmpeg.readFile(`frame-${frameNumber}.png`);
             
-            const img = cv.imdecode(new Uint8Array(frameData as ArrayBuffer), cv.IMREAD_COLOR);
+            const img = cv.imdecode(new Uint8Array(frameData as ArrayBuffer), cv.IMREAD_UNCHANGED);
             frameMats.push(img);
 
             const hsv = new cv.Mat();
-            cv.cvtColor(img, hsv, cv.COLOR_RGBA2RGB);
-            cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+            // FIX: FFMpeg's PNG output is RGBA. Correctly convert from RGBA to HSV.
+            cv.cvtColor(img, hsv, cv.COLOR_RGBA2HSV);
 
             const hist = new cv.Mat();
             cv.calcHist([hsv], [0, 1], new cv.Mat(), hist, [50, 60], [0, 180, 0, 256], false);
@@ -124,7 +123,7 @@ self.onmessage = async (event: MessageEvent<{ file: File }>) => {
 
         scores.sort((a, b) => a.score - b.score);
 
-        const topCandidates: Candidate[] = scores.slice(0, 3).map(s => ({
+        const topCandidates: Candidate[] = scores.slice(0, 10).map(s => ({
             startTime: s.i * frameInterval,
             endTime: s.j * frameInterval,
             score: s.score,
@@ -170,12 +169,14 @@ async function loadDependencies() {
 async function getVideoInfo(fileName: string): Promise<{ duration: number }> {
     if (!ffmpeg) throw new Error("FFmpeg not loaded for info");
     let log = '';
-    ffmpeg.on('log', ({message}) => log += message + '\n');
+    const logger = ({message}: {message: string}) => log += message + '\n';
+    ffmpeg.on('log', logger);
     try {
-        await ffmpeg.exec(['-i', fileName]);
+        await ffmpeg.exec(['-i', fileName, '-f', 'null', '-']);
     } catch(e) {
         // FFmpeg exits with non-zero code on info commands, so we catch and continue
     }
+    ffmpeg.off('log', logger);
     const durationMatch = log.match(/Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
     if (durationMatch) {
         const [, hours, minutes, seconds, milliseconds] = durationMatch;

@@ -1,4 +1,3 @@
-
 /// <reference lib="webworker" />
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
@@ -16,9 +15,10 @@ self.onmessage = async (event: MessageEvent<{ file: File; options: RenderOptions
         if (!ffmpeg) throw new Error("FFmpeg failed to load.");
         
         ffmpeg.on('progress', ({ progress, time }) => {
-            const totalDuration = options.candidate.endTime - options.candidate.startTime;
-            const percentage = Math.max(0, Math.min(1, time / (totalDuration * 1000 * 1000))) * 100;
-            postMessage({ type: 'progress', payload: { progress: percentage, message: `Encoding...` } });
+            // The time property from FFmpeg progress is not always reliable for total duration
+            // We'll use a simple progress percentage instead.
+            const p = Math.round(progress * 100);
+            postMessage({ type: 'progress', payload: { progress: Math.max(10, Math.min(95, p)), message: `Encoding...` } });
         });
         
         postMessage({ type: 'progress', payload: { progress: 5, message: 'Loading video data...' } });
@@ -31,54 +31,58 @@ self.onmessage = async (event: MessageEvent<{ file: File; options: RenderOptions
 
         let command: string[];
 
+        postMessage({ type: 'progress', payload: { progress: 10, message: 'Building commands...' } });
+
         if (pingPong) {
-             postMessage({ type: 'progress', payload: { progress: 20, message: 'Building ping-pong loop...' } });
              command = [
                 '-i', 'input.mp4',
                 '-filter_complex',
+                // Trim the forward segment
                 `[0:v]trim=start=${startTime}:end=${candidate.endTime},setpts=PTS-STARTPTS[v_fwd];` +
+                // Trim and reverse the backward segment
                 `[0:v]trim=start=${startTime}:end=${candidate.endTime},setpts=PTS-STARTPTS,reverse[v_rev];` +
-                `[v_fwd][v_rev]concat=n=2:v=1:a=0[v_out]`,
-                '-map', '[v_out]',
+                // Concatenate forward and backward parts
+                `[v_fwd][v_rev]concat=n=2:v=1[v_out]`,
+                '-map', '[v_out]', '-an', // Explicitly remove audio
                 outputFilename
             ];
         } else if (crossfadeDuration > 0) {
-            postMessage({ type: 'progress', payload: { progress: 20, message: 'Building crossfade loop...' } });
             command = [
                 '-i', 'input.mp4',
                 '-filter_complex',
-                `[0:v]trim=start=${startTime}:end=${candidate.endTime},setpts=PTS-STARTPTS[v_loop];` +
-                `[v_loop]split[v1][v2];` +
-                `[v1]trim=end=${crossfadeDuration},setpts=PTS-STARTPTS[fadeoutsrc];`+
-                `[v2]trim=start=${loopDuration-crossfadeDuration},setpts=PTS-STARTPTS[fadeinsrc];`+
-                `[fadeoutsrc][fadeinsrc]xfade=transition=fade:duration=${crossfadeDuration}:offset=${loopDuration - crossfadeDuration}[v_x];` +
-                `[v_loop]trim=start=${crossfadeDuration}:end=${loopDuration-crossfadeDuration},setpts=PTS-STARTPTS[v_main];` +
-                `[v_main][v_x]concat=n=2:v=1:a=0[v_out]`,
-                '-map', '[v_out]',
+                // 1. Trim the main loop segment and split it into two streams
+                `[0:v]trim=start=${startTime}:end=${candidate.endTime},setpts=PTS-STARTPTS,split=2[v_main][v_fade_src];` +
+                // 2. From the second stream, take just the beginning for the fade-in part
+                `[v_fade_src]trim=duration=${crossfadeDuration},setpts=PTS-STARTPTS[v_fade_in];` +
+                // 3. Crossfade the fade-in part over the end of the main part
+                `[v_main][v_fade_in]xfade=transition=fade:duration=${crossfadeDuration}:offset=${loopDuration - crossfadeDuration}[v_out]`,
+                '-map', '[v_out]', '-an',
                 outputFilename
             ];
         } else { // Hard cut
-            postMessage({ type: 'progress', payload: { progress: 20, message: 'Creating simple loop...' } });
+            // FIX: Remove "-c copy" to allow for frame-accurate cuts by re-encoding.
             command = [
-                '-i', 'input.mp4',
                 '-ss', startTime.toString(),
                 '-to', candidate.endTime.toString(),
-                '-c', 'copy',
+                '-i', 'input.mp4',
+                '-an', // No audio
+                '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
                 outputFilename
             ];
         }
 
         if(outputFormat === 'gif') {
-            postMessage({ type: 'progress', payload: { progress: 20, message: 'Building GIF...' } });
             command = [
                 '-i', 'input.mp4',
                 '-ss', startTime.toString(),
                 '-to', candidate.endTime.toString(),
                 '-vf', 'fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
+                '-loop', '0', // FIX: Loop GIF infinitely
                 outputFilename
             ]
         }
-
+        
+        postMessage({ type: 'progress', payload: { progress: 20, message: 'Executing render...' } });
         await ffmpeg.exec(command);
         
         postMessage({ type: 'progress', payload: { progress: 95, message: 'Finalizing...' } });
@@ -112,7 +116,7 @@ async function loadFFmpeg() {
     if (!ffmpeg) {
         ffmpeg = new FFmpeg();
         ffmpeg.on('log', ({ message }) => {
-            postMessage({ type: 'log', payload: message });
+            // console.log(message) // Uncomment for deep debugging
         });
         await ffmpeg.load({
             coreURL: `${VENDOR_URL}/ffmpeg/ffmpeg-core.js`,

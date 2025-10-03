@@ -1,3 +1,5 @@
+// FIX: Add Vite client types reference to make `import.meta.env` available globally.
+/// <reference types="vite/client" />
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';

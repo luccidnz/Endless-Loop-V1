@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { useLoopStore } from '../store/useLoopStore';
 import { Candidate } from '../types';
@@ -22,6 +21,8 @@ export const Timeline: React.FC = () => {
         if (!heatmap || heatmap.length === 0) return;
         
         const scores = heatmap.flat().filter(s => s < Infinity && s > -Infinity);
+        if (scores.length === 0) return;
+
         const minScore = Math.min(...scores);
         const maxScore = Math.max(...scores);
 
@@ -46,12 +47,20 @@ export const Timeline: React.FC = () => {
     }, [analysisResult]);
     
     const formatTime = (seconds: number) => new Date(seconds * 1000).toISOString().substr(14, 5);
+    const hasCandidates = analysisResult && analysisResult.candidates.length > 0;
 
     return (
         <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
             <h3 className="text-lg font-semibold mb-2">Loop Candidates</h3>
             {status === 'analyzing' && <p className="text-gray-400">Analyzing video...</p>}
-            {analysisResult ? (
+            
+            {status === 'analysis_done' && !hasCandidates && (
+                 <p className="text-center text-gray-400 py-4">
+                    No suitable loop points found. This can happen with videos that have rapid, non-repeating motion.
+                 </p>
+            )}
+
+            {hasCandidates ? (
                 <>
                     <div className="relative w-full h-16 bg-gray-700 rounded-md overflow-hidden mb-2">
                         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" width="1000" height="64" />
@@ -61,7 +70,7 @@ export const Timeline: React.FC = () => {
                             const isSelected = selectedCandidate?.startTime === candidate.startTime && selectedCandidate?.endTime === candidate.endTime;
                             return (
                                 <div
-                                    key={index}
+                                    key={`${candidate.startTime}-${candidate.endTime}`}
                                     className={`absolute h-full top-0 border-2 transition-all cursor-pointer ${isSelected ? 'bg-brand-primary/50 border-brand-primary' : 'bg-white/20 border-white/30 hover:bg-white/30'}`}
                                     style={{ left: `${left}%`, width: `${width}%` }}
                                     onClick={() => setSelectedCandidate(candidate)}
@@ -70,7 +79,7 @@ export const Timeline: React.FC = () => {
                             );
                         })}
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
                         {analysisResult.candidates.map((candidate, index) => {
                             const isSelected = selectedCandidate?.startTime === candidate.startTime && selectedCandidate?.endTime === candidate.endTime;
                             return (
@@ -89,7 +98,7 @@ export const Timeline: React.FC = () => {
                     </div>
                 </>
             ) : (
-                status !== 'analyzing' && <p className="text-gray-400">Run analysis to find loop points.</p>
+                status !== 'analyzing' && status !== 'analysis_done' && <p className="text-gray-400">Run analysis to find loop points.</p>
             )}
         </div>
     );

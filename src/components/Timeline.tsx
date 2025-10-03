@@ -1,105 +1,82 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React from 'react';
 import { useLoopStore } from '../store/useLoopStore';
-import { Candidate } from '../types';
+import { LoopCandidate } from '../types';
 
-export const Timeline: React.FC = () => {
-    const { analysisResult, selectedCandidate, setSelectedCandidate, status } = useLoopStore();
-    const canvasRef = useRef<HTMLCanvasElement>(null);
+const Timeline: React.FC = () => {
+    const { analysisResult, selectedCandidate, selectCandidate } = useLoopStore();
 
-    useEffect(() => {
-        if (!analysisResult || !canvasRef.current) return;
-
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        const { heatmap, duration } = analysisResult;
-        const width = canvas.width;
-        const height = canvas.height;
-        ctx.clearRect(0, 0, width, height);
-
-        if (!heatmap || heatmap.length === 0) return;
-        
-        const scores = heatmap.flat().filter(s => s < Infinity && s > -Infinity);
-        if (scores.length === 0) return;
-
-        const minScore = Math.min(...scores);
-        const maxScore = Math.max(...scores);
-
-        const frameCount = heatmap.length;
-        const barWidth = width / frameCount;
-
-        for (let i = 0; i < frameCount; i++) {
-            let bestScoreInColumn = Infinity;
-            for(let j=0; j < heatmap[i].length; j++) {
-                if(heatmap[i][j] < bestScoreInColumn) {
-                    bestScoreInColumn = heatmap[i][j];
-                }
-            }
-            if(bestScoreInColumn === Infinity) continue;
-
-            const normalizedScore = 1 - ((bestScoreInColumn - minScore) / (maxScore - minScore || 1));
-            
-            ctx.fillStyle = `rgba(0, 255, 0, ${Math.max(0.1, normalizedScore * 0.7)})`;
-            ctx.fillRect(i * barWidth, 0, barWidth, height);
-        }
-
-    }, [analysisResult]);
+    if (!analysisResult) {
+        return (
+            <div className="h-32 bg-gray-800 rounded-lg flex items-center justify-center p-4">
+                <p className="text-gray-500 text-center">Timeline and candidates will appear after analysis.</p>
+            </div>
+        );
+    }
     
-    const formatTime = (seconds: number) => new Date(seconds * 1000).toISOString().substr(14, 5);
-    const hasCandidates = analysisResult && analysisResult.candidates.length > 0;
+    const { candidates, durationMs } = analysisResult;
+
+    const handleCandidateClick = (candidate: LoopCandidate) => {
+        selectCandidate(candidate);
+    };
+    
+    const getHeatmapColor = (value: number) => {
+        const g = Math.floor(200 * value);
+        const r = Math.floor(200 * (1 - value));
+        return `rgb(${r}, ${g}, 50)`;
+    };
 
     return (
-        <div className="bg-gray-800 p-4 rounded-lg shadow-lg">
-            <h3 className="text-lg font-semibold mb-2">Loop Candidates</h3>
-            {status === 'analyzing' && <p className="text-gray-400">Analyzing video...</p>}
-            
-            {status === 'analysis_done' && !hasCandidates && (
-                 <p className="text-center text-gray-400 py-4">
-                    No suitable loop points found. This can happen with videos that have rapid, non-repeating motion.
-                 </p>
-            )}
+        <div className="bg-gray-800 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold mb-3">Loop Candidates</h3>
+            <div className="relative h-12 w-full bg-gray-700 rounded">
+                {analysisResult.heatmap && (
+                    <div className="absolute top-0 left-0 w-full h-full flex overflow-hidden rounded">
+                        {analysisResult.heatmap.map((value, index) => (
+                            <div key={index} className="h-full flex-1" style={{ backgroundColor: getHeatmapColor(value) }} />
+                        ))}
+                    </div>
+                )}
+                {candidates.map((c, index) => {
+                    const startPercent = (c.startMs / durationMs) * 100;
+                    const endPercent = (c.endMs / durationMs) * 100;
+                    const isSelected = selectedCandidate?.startMs === c.startMs && selectedCandidate?.endMs === c.endMs;
 
-            {hasCandidates ? (
-                <>
-                    <div className="relative w-full h-16 bg-gray-700 rounded-md overflow-hidden mb-2">
-                        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" width="1000" height="64" />
-                        {analysisResult.candidates.map((candidate, index) => {
-                            const left = (candidate.startTime / analysisResult.duration) * 100;
-                            const width = ((candidate.endTime - candidate.startTime) / analysisResult.duration) * 100;
-                            const isSelected = selectedCandidate?.startTime === candidate.startTime && selectedCandidate?.endTime === candidate.endTime;
-                            return (
-                                <div
-                                    key={`${candidate.startTime}-${candidate.endTime}`}
-                                    className={`absolute h-full top-0 border-2 transition-all cursor-pointer ${isSelected ? 'bg-brand-primary/50 border-brand-primary' : 'bg-white/20 border-white/30 hover:bg-white/30'}`}
-                                    style={{ left: `${left}%`, width: `${width}%` }}
-                                    onClick={() => setSelectedCandidate(candidate)}
-                                    title={`Score: ${candidate.score.toFixed(4)}`}
-                                />
-                            );
-                        })}
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                        {analysisResult.candidates.map((candidate, index) => {
-                            const isSelected = selectedCandidate?.startTime === candidate.startTime && selectedCandidate?.endTime === candidate.endTime;
-                            return (
-                                <div
-                                    key={index}
-                                    className={`p-2 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-brand-primary/20' : 'bg-gray-700 hover:bg-gray-600'}`}
-                                    onClick={() => setSelectedCandidate(candidate)}
-                                >
-                                    <p className="font-semibold">
-                                        Candidate {index + 1}: {formatTime(candidate.startTime)} - {formatTime(candidate.endTime)}
-                                    </p>
-                                    <p className="text-sm text-gray-400">Composite Score: {candidate.score.toFixed(4)} (lower is better)</p>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </>
-            ) : (
-                status !== 'analyzing' && status !== 'analysis_done' && <p className="text-gray-400">Run analysis to find loop points.</p>
-            )}
+                    return (
+                        <div
+                            key={index}
+                            className={`absolute top-0 h-full border-x-2 cursor-pointer transition-all duration-200 ${isSelected ? 'bg-purple-500/30 border-purple-400 z-10' : 'bg-green-500/20 border-green-400 hover:bg-green-500/30'}`}
+                            style={{
+                                left: `${startPercent}%`,
+                                width: `${Math.max(0.5, endPercent - startPercent)}%`,
+                            }}
+                            onClick={() => handleCandidateClick(c)}
+                            title={`Candidate ${index + 1} (Score: ${c.score.toFixed(3)})`}
+                        >
+                            <div className={`absolute -top-5 text-xs px-1 rounded ${isSelected ? 'bg-purple-500' : 'bg-green-500'}`}>
+                                #{index + 1}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+            <div className="mt-4">
+                {candidates.length > 0 ? (
+                    <ul className="space-y-2">
+                        {candidates.map((c, i) => (
+                             <li 
+                                key={i} 
+                                onClick={() => handleCandidateClick(c)}
+                                className={`p-2 rounded cursor-pointer transition-colors ${selectedCandidate === c ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
+                                Candidate #{i + 1}: {(c.startMs / 1000).toFixed(2)}s to {(c.endMs / 1000).toFixed(2)}s (Score: {c.score.toFixed(3)})
+                             </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p className="text-gray-400 text-center">No suitable loop candidates found.</p>
+                )}
+            </div>
         </div>
     );
 };
+
+export default Timeline;

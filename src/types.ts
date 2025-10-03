@@ -1,46 +1,34 @@
-
-export interface Candidate {
-  startTime: number; // in seconds
-  endTime: number; // in seconds
-  score: number; // Composite score, lower is better
-  notes: {
-    ssim: number; // Structural Similarity Index, higher is better (closer to 1)
-    histDelta: number; // Histogram difference, lower is better (closer to 0)
-  };
+export interface LoopCandidate {
+  startMs: number;
+  endMs: number;
+  score: number;
+  notes?: string;
 }
 
-export interface AnalyzeOptions {
-  minLoopDuration: number; // in seconds
-  maxLoopDuration: number; // in seconds
-  frameRate: number; // fps for analysis
-}
-
-export interface AnalyzeResult {
-  candidates: Candidate[];
-  heatmap: number[][]; // 2D array of similarity scores for timeline
-  duration: number; // video duration in seconds
-  thumbnails: string[]; // base64 data URLs for thumbnails
-  frameInterval: number;
+export interface AnalysisResult {
+  candidates: LoopCandidate[];
+  heatmap?: number[]; // Representing loopability score over time
+  durationMs: number;
 }
 
 export interface RenderOptions {
-  candidate: Candidate;
-  crossfadeDuration: number; // in seconds
-  stabilization: number; // 0-100 (placeholder)
+  candidate: LoopCandidate;
+  format: 'mp4' | 'webm' | 'gif';
+  duration?: number;
+  crossfadeMs: number;
   pingPong: boolean;
-  outputFormat: 'mp4' | 'webm' | 'gif';
+  resolution: { width: number; height: number };
+  fileSizeTargetMb?: number;
 }
 
-export type AppStatus =
-  | 'idle'
-  | 'loading_video'
-  | 'analyzing'
-  | 'analysis_done'
-  | 'rendering'
-  | 'render_done'
-  | 'error';
+export type AnalysisWorkerMessage = 
+  | { type: 'ANALYZE'; payload: { file: File, options: any } }
+  | { type: 'PROGRESS'; payload: { message: string, progress: number } }
+  | { type: 'RESULT'; payload: AnalysisResult }
+  | { type: 'ERROR'; payload: { message: string } };
 
-export interface WorkerMessage {
-  type: 'progress' | 'result' | 'error' | 'log' | 'info';
-  payload: any;
-}
+export type RenderWorkerMessage = 
+  | { type: 'RENDER'; payload: { file: File, options: RenderOptions } }
+  | { type: 'PROGRESS'; payload: { message: string, progress: number } }
+  | { type: 'RESULT'; payload: { blob: Blob, url: string } }
+  | { type: 'ERROR'; payload: { message: string } };

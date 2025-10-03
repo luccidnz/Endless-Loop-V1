@@ -1,47 +1,16 @@
-
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Endless Loop</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              'brand-primary': '#6366F1',
-              'brand-secondary': '#EC4899',
-              'gray-900': '#111827',
-              'gray-800': '#1F2937',
-              'gray-700': '#374151',
-              'gray-200': '#E5E7EB',
-              'gray-50': '#F9FAFB',
-            }
-          }
-        }
-      }
-    </script>
-  <script type="importmap">
+<script type="importmap">
 {
   "imports": {
+    "vite": "https://aistudiocdn.com/vite@^7.1.8",
+    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "webworker": "https://aistudiocdn.com/webworker@^0.8.4",
-    "@ffmpeg/util": "https://aistudiocdn.com/@ffmpeg/util@^0.12.2",
-    "@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.0.4",
     "zustand": "https://aistudiocdn.com/zustand@^5.0.8",
+    "react-dropzone": "https://aistudiocdn.com/react-dropzone@^14.3.8",
     "@ffmpeg/ffmpeg": "https://aistudiocdn.com/@ffmpeg/ffmpeg@^0.12.15",
-    "vite": "https://aistudiocdn.com/vite@^7.1.8"
+    "@ffmpeg/util": "https://aistudiocdn.com/@ffmpeg/util@^0.12.2"
   }
 }
 </script>
-</head>
-  <body class="bg-gray-900 text-gray-50 antialiased">
-    <div id="root"></div>
-    <script type="module" src="/src/index.tsx"></script>
-  </body>
-</html>
+full contents of index.html

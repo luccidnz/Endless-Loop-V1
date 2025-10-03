@@ -13,17 +13,31 @@ const FFMPEG_WASM_URL = '/vendor/ffmpeg/ffmpeg-core.wasm';
 
 async function loadCv() {
     if (cvLoaded) return;
-    self.importScripts(OPENCV_URL);
-    return new Promise<void>((resolve) => {
-        const checkCv = () => {
-            if (cv && cv.Mat) {
+    
+    // Module workers don't support `importScripts`. We must fetch and `eval` the script.
+    try {
+        const response = await fetch(OPENCV_URL);
+        if (!response.ok) throw new Error(`Failed to fetch opencv.js: ${response.statusText}`);
+        const script = await response.text();
+        self.eval(script);
+    } catch (error) {
+        console.error('Error loading OpenCV.js:', error);
+        throw error;
+    }
+
+    return new Promise<void>((resolve, reject) => {
+        const startTime = Date.now();
+        const checkCvReady = () => {
+            if (typeof cv !== 'undefined' && cv.Mat) {
                 cvLoaded = true;
                 resolve();
+            } else if (Date.now() - startTime > 15000) { // 15s timeout, opencv can be large
+                reject(new Error('Timed out waiting for OpenCV.js to initialize.'));
             } else {
-                setTimeout(checkCv, 50);
+                setTimeout(checkCvReady, 100);
             }
         };
-        checkCv();
+        checkCvReady();
     });
 }
 

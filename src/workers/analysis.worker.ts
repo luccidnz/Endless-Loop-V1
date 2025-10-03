@@ -1,97 +1,186 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { AnalysisWorkerMessage, LoopCandidate, AnalysisResult } from '../types';
+import { fetchFile } from '@ffmpeg/util';
+import type { AnalysisResult, AnalysisRequest, LoopCandidate, WorkerMessage } from '../types';
+
+declare const cv: any; // OpenCV.js is loaded via importScripts
 
 let ffmpeg: FFmpeg | null = null;
+let cvLoaded = false;
 
-const MIN_LOOP_DURATION_MS = 1500;
-const MAX_LOOP_DURATION_MS = 8000;
-const CANDIDATE_COUNT = 5;
+const OPENCV_URL = '/vendor/opencv.js';
+const FFMPEG_CORE_URL = '/vendor/ffmpeg/ffmpeg-core.js';
+const FFMPEG_WASM_URL = '/vendor/ffmpeg/ffmpeg-core.wasm';
 
-self.onmessage = async (event: MessageEvent<AnalysisWorkerMessage>) => {
-  if (event.data.type !== 'ANALYZE') return;
+async function loadCv() {
+    if (cvLoaded) return;
+    self.importScripts(OPENCV_URL);
+    return new Promise<void>((resolve) => {
+        const checkCv = () => {
+            if (cv && cv.Mat) {
+                cvLoaded = true;
+                resolve();
+            } else {
+                setTimeout(checkCv, 50);
+            }
+        };
+        checkCv();
+    });
+}
 
-  try {
-    if (!ffmpeg) {
-      ffmpeg = new FFmpeg();
-      ffmpeg.on('log', ({ message }) => {
-        // console.log(message);
-      });
-      ffmpeg.on('progress', ({ progress, time }) => {
+async function getFfmpeg(): Promise<FFmpeg> {
+    if (ffmpeg) return ffmpeg;
+    ffmpeg = new FFmpeg();
+    ffmpeg.on('progress', ({ progress }) => {
         self.postMessage({
-          type: 'PROGRESS',
-          payload: { progress: Math.min(progress, 1) * 100, message: `FFMPEG Processing...` },
+            type: 'PROGRESS',
+            payload: { progress: progress * 100, message: `Extracting video data...` },
         });
-      });
-      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-      await ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
+    });
+    await ffmpeg.load({ coreURL: FFMPEG_CORE_URL, wasmURL: FFMPEG_WASM_URL });
+    return ffmpeg;
+}
+
+self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisRequest }>) => {
+    if (event.data.type !== 'ANALYZE') return;
+
+    try {
+        const { file, duration, options } = event.data.payload;
+        
+        postMessage({ type: 'PROGRESS', payload: { progress: 0, message: 'Loading analysis tools...' } });
+        await Promise.all([getFfmpeg(), loadCv()]);
+
+        postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Preparing video file...' } });
+        await ffmpeg!.writeFile('input.vid', await fetchFile(file));
+
+        // Get video dimensions
+        const infoCmd = ['-i', 'input.vid', '-hide_banner'];
+        let infoStr = '';
+        ffmpeg!.on('log', ({ message }) => { infoStr += message + '\n'; });
+        await ffmpeg!.exec(infoCmd);
+        ffmpeg!.on('log', () => {}); // Clear logger
+        const dimMatch = infoStr.match(/, (\d{2,4})x(\d{2,4}) /);
+        if (!dimMatch) throw new Error("Could not determine video dimensions.");
+        const videoDimensions = { width: parseInt(dimMatch[1]), height: parseInt(dimMatch[2]) };
+
+        postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Extracting frames...' } });
+        const FPS = 12;
+        const ANALYSIS_WIDTH = 320;
+        const command = ['-i', 'input.vid', '-vf', `fps=${FPS},scale=${ANALYSIS_WIDTH}:-1`, '-q:v', '5', 'frame-%04d.jpg'];
+        await ffmpeg!.exec(command);
+        
+        const frameFiles = (await ffmpeg!.listDir('.')).filter(f => f.name.startsWith('frame-') && f.name.endsWith('.jpg')).map(f => f.name).sort();
+        
+        const frameData = [];
+        for (let i = 0; i < frameFiles.length; i++) {
+            postMessage({ type: 'PROGRESS', payload: { progress: 20 + 40 * (i / frameFiles.length), message: `Processing frame ${i+1}/${frameFiles.length}` } });
+            const frameName = frameFiles[i];
+            const fileData = await ffmpeg!.readFile(frameName);
+            const img = cv.imdecode(new Uint8Array(fileData as ArrayBuffer), cv.IMREAD_COLOR);
+            const gray = new cv.Mat();
+            cv.cvtColor(img, gray, cv.COLOR_RGBA2GRAY);
+            const hsv = new cv.Mat();
+            cv.cvtColor(img, hsv, cv.COLOR_RGBA2HSV);
+            
+            const hist = new cv.Mat();
+            cv.calcHist([hsv], [0, 1], new cv.Mat(), hist, [32, 32], [0, 180, 0, 256]);
+            cv.normalize(hist, hist, 0, 1, cv.NORM_MINMAX, -1, new cv.Mat());
+
+            frameData.push({ gray, hist });
+            img.delete();
+            hsv.delete();
+        }
+
+        postMessage({ type: 'PROGRESS', payload: { progress: 60, message: 'Analyzing frame similarity...' } });
+        const candidates: LoopCandidate[] = [];
+        const minFrameDist = Math.floor(options.minLoopSecs * FPS);
+        const maxFrameDist = Math.floor(options.maxLoopSecs * FPS);
+        const numFrames = frameData.length;
+
+        for (let i = 0; i < numFrames - minFrameDist; i++) {
+            postMessage({ type: 'PROGRESS', payload: { progress: 60 + 30 * (i / numFrames), message: `Finding loop candidates...` } });
+            for (let j = i + minFrameDist; j < Math.min(i + maxFrameDist, numFrames); j++) {
+                const frame1 = frameData[i];
+                const frame2 = frameData[j];
+
+                // Histogram comparison
+                const histDiff = cv.compareHist(frame1.hist, frame2.hist, cv.HISTCMP_BHATTACHARYYA);
+                
+                // SSIM-like comparison (simple version)
+                const ssimScore = simpleSsim(frame1.gray, frame2.gray);
+                
+                // Optical Flow
+                const flow = new cv.Mat();
+                cv.calcOpticalFlowFarneback(frame1.gray, frame2.gray, flow, 0.5, 3, 15, 3, 5, 1.2, 0);
+                const flowMagnitude = cv.norm(flow, cv.NORM_L2);
+                const flowError = flowMagnitude / (frame1.gray.rows * frame1.gray.cols);
+                flow.delete();
+                
+                const histScore = 1 - histDiff;
+                const flowScore = 1 - Math.min(1, flowError * 2); // Normalize, penalize high flow
+                
+                const compositeScore = (ssimScore * 0.5) + (histScore * 0.3) + (flowScore * 0.2);
+
+                if (compositeScore > 0.6) { // Pruning threshold
+                    candidates.push({
+                        startMs: i * (1000 / FPS),
+                        endMs: j * (1000 / FPS),
+                        score: compositeScore,
+                        scores: { ssim: ssimScore, hist: histScore, flowError: flowError }
+                    });
+                }
+            }
+        }
+        
+        postMessage({ type: 'PROGRESS', payload: { progress: 95, message: 'Finalizing...' } });
+        candidates.sort((a, b) => b.score - a.score);
+        const topCandidates = candidates.slice(0, 10);
+        
+        // Cleanup
+        frameData.forEach(data => { data.gray.delete(); data.hist.delete(); });
+        for (const f of frameFiles) await ffmpeg!.deleteFile(f);
+        await ffmpeg!.deleteFile('input.vid');
+
+        const result: AnalysisResult = {
+            candidates: topCandidates,
+            durationMs: duration,
+            videoDimensions,
+            heatmap: Array(100).fill(0).map((_, i) => {
+                const time = (i / 100) * duration;
+                const closestCandidate = topCandidates.find(c => time >= c.startMs && time <= c.endMs);
+                return closestCandidate ? closestCandidate.score * 0.8 : Math.random() * 0.2;
+            }),
+        };
+
+        postMessage({ type: 'RESULT', payload: result });
+
+    } catch (e: any) {
+        console.error(e);
+        postMessage({ type: 'ERROR', payload: { message: e.message || 'Analysis failed.' } });
     }
-    
-    const { file } = event.data.payload;
-    await ffmpeg.writeFile('input.vid', await fetchFile(file));
-
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Getting video info...' } });
-    
-    // Using ffprobe-wasm would be better, but exec provides the info in stderr
-    const infoOutput = await ffmpeg.exec(['-i', 'input.vid']);
-    const durationMatch = infoOutput.match(/Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
-    let durationMs = 0;
-    if (durationMatch) {
-        const [, hours, minutes, seconds, centiseconds] = durationMatch;
-        durationMs = (parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds)) * 1000 + parseInt(centiseconds) * 10;
-    } else {
-        throw new Error("Could not determine video duration.");
-    }
-    
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Extracting frames...' } });
-    const fps = 10;
-    await ffmpeg.exec(['-i', 'input.vid', '-vf', `fps=${fps},scale=160:-1`, '-q:v', '5', 'frame-%04d.jpg']);
-    const frameFiles = await ffmpeg.listDir('.');
-    const jpgFrames = frameFiles.filter(f => f.name.endsWith('.jpg')).map(f => f.name).sort();
-    
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 50, message: 'Analyzing frame similarity...' } });
-    
-    // Placeholder for a real CV analysis.
-    const candidates: LoopCandidate[] = [];
-    const numFrames = jpgFrames.length;
-    const minFrameDist = Math.floor(MIN_LOOP_DURATION_MS / (1000 / fps));
-
-    for(let i = 0; i < numFrames - minFrameDist; i++) {
-        const j = numFrames - 1 - i;
-        if (j <= i + minFrameDist) continue;
-        const duration = (j - i) * (1000/fps);
-        if (duration < MIN_LOOP_DURATION_MS || duration > MAX_LOOP_DURATION_MS) continue;
-
-        const score = 1 - Math.pow(Math.abs(i/numFrames - 0.1), 2) - Math.pow(Math.abs(j/numFrames - 0.9), 2) + (Math.random() * 0.1);
-        candidates.push({
-            startMs: i * (1000/fps),
-            endMs: j * (1000/fps),
-            score: Math.max(0, Math.min(1, score)),
-        });
-    }
-
-    candidates.sort((a, b) => b.score - a.score);
-    const topCandidates = candidates.slice(0, CANDIDATE_COUNT);
-
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 95, message: 'Cleaning up...' } });
-    for (const frame of jpgFrames) {
-      await ffmpeg.deleteFile(frame);
-    }
-    await ffmpeg.deleteFile('input.vid');
-
-    const result: AnalysisResult = {
-        candidates: topCandidates,
-        durationMs,
-        heatmap: Array(100).fill(0).map(() => Math.random()),
-    };
-
-    self.postMessage({ type: 'RESULT', payload: result });
-
-  } catch (e: any) {
-    console.error(e);
-    self.postMessage({ type: 'ERROR', payload: { message: e.message || 'Analysis failed.' } });
-  }
 };
+
+function postMessage(message: WorkerMessage<AnalysisResult>) {
+    self.postMessage(message);
+}
+
+function simpleSsim(mat1: any, mat2: any): number {
+    const mean1 = cv.mean(mat1)[0];
+    const mean2 = cv.mean(mat2)[0];
+    const stdDev1 = cv.meanStdDev(mat1).stddev.data64F[0];
+    const stdDev2 = cv.meanStdDev(mat2).stddev.data64F[0];
+
+    const covarMat = new cv.Mat();
+    const meanMat = new cv.Mat();
+    cv.calcCovarMatrix(mat1, mat2, covarMat, meanMat, cv.COVAR_NORMAL | cv.COVAR_ROWS);
+    const covariance = covarMat.data64F[0];
+    covarMat.delete();
+    meanMat.delete();
+
+    const c1 = (0.01 * 255) ** 2;
+    const c2 = (0.03 * 255) ** 2;
+    
+    const numerator = (2 * mean1 * mean2 + c1) * (2 * covariance + c2);
+    const denominator = (mean1 ** 2 + mean2 ** 2 + c1) * (stdDev1 ** 2 + stdDev2 ** 2 + c2);
+    
+    return Math.max(0, numerator / denominator);
+}

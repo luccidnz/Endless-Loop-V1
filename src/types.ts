@@ -1,34 +1,53 @@
+
 export interface LoopCandidate {
   startMs: number;
   endMs: number;
-  score: number;
-  notes?: string;
+  score: number; // Composite score
+  scores: {
+    ssim: number;
+    hist: number;
+    flowError: number;
+  };
 }
 
 export interface AnalysisResult {
   candidates: LoopCandidate[];
-  heatmap?: number[]; // Representing loopability score over time
+  heatmap: number[];
   durationMs: number;
+  videoDimensions: { width: number, height: number };
 }
+
+export type RenderMode = 'cut' | 'crossfade' | 'flow_morph';
 
 export interface RenderOptions {
   candidate: LoopCandidate;
   format: 'mp4' | 'webm' | 'gif';
-  duration?: number;
+  renderMode: RenderMode;
   crossfadeMs: number;
   pingPong: boolean;
   resolution: { width: number; height: number };
-  fileSizeTargetMb?: number;
 }
 
-export type AnalysisWorkerMessage = 
-  | { type: 'ANALYZE'; payload: { file: File, options: any } }
+// === Worker Message Types ===
+
+export type AnalysisRequest = {
+  file: File;
+  duration: number;
+  options: {
+    minLoopSecs: number;
+    maxLoopSecs: number;
+  };
+};
+
+export type RenderRequest = {
+  file: File;
+  options: RenderOptions;
+};
+
+export type WorkerMessage<T> =
   | { type: 'PROGRESS'; payload: { message: string, progress: number } }
-  | { type: 'RESULT'; payload: AnalysisResult }
+  | { type: 'RESULT'; payload: T }
   | { type: 'ERROR'; payload: { message: string } };
 
-export type RenderWorkerMessage = 
-  | { type: 'RENDER'; payload: { file: File, options: RenderOptions } }
-  | { type: 'PROGRESS'; payload: { message: string, progress: number } }
-  | { type: 'RESULT'; payload: { blob: Blob, url: string } }
-  | { type: 'ERROR'; payload: { message: string } };
+export type AnalysisWorkerMessage = WorkerMessage<AnalysisResult>;
+export type RenderWorkerMessage = WorkerMessage<{ blob: Blob, url: string }>;

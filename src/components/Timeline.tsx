@@ -3,39 +3,24 @@ import { useLoopStore } from '../store/useLoopStore';
 import { LoopCandidate } from '../types';
 
 const Timeline: React.FC = () => {
-    const { analysisResult, selectedCandidate, selectCandidate } = useLoopStore();
+    const { analysisResult, selectedCandidate, selectCandidate, status } = useLoopStore();
 
-    if (!analysisResult) {
+    if (status === 'idle' || status === 'analyzing') {
         return (
-            <div className="h-32 bg-gray-800 rounded-lg flex items-center justify-center p-4">
-                <p className="text-gray-500 text-center">Timeline and candidates will appear after analysis.</p>
+            <div className="h-48 bg-deep-purple/50 border-2 border-glow-cyan/20 rounded-lg flex items-center justify-center p-4">
+                <p className="text-glow-cyan/70 text-center">Timeline and candidates will appear after analysis.</p>
             </div>
         );
     }
     
+    if (!analysisResult) return null;
+    
     const { candidates, durationMs } = analysisResult;
 
-    const handleCandidateClick = (candidate: LoopCandidate) => {
-        selectCandidate(candidate);
-    };
-    
-    const getHeatmapColor = (value: number) => {
-        const g = Math.floor(200 * value);
-        const r = Math.floor(200 * (1 - value));
-        return `rgb(${r}, ${g}, 50)`;
-    };
-
     return (
-        <div className="bg-gray-800 p-4 rounded-lg">
-            <h3 className="text-lg font-semibold mb-3">Loop Candidates</h3>
-            <div className="relative h-12 w-full bg-gray-700 rounded">
-                {analysisResult.heatmap && (
-                    <div className="absolute top-0 left-0 w-full h-full flex overflow-hidden rounded">
-                        {analysisResult.heatmap.map((value, index) => (
-                            <div key={index} className="h-full flex-1" style={{ backgroundColor: getHeatmapColor(value) }} />
-                        ))}
-                    </div>
-                )}
+        <div className="bg-deep-purple/50 border-2 border-glow-cyan/20 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold mb-3 text-star-gold">Loop Candidates</h3>
+            <div className="relative h-10 w-full bg-cosmic-blue rounded-full overflow-hidden border border-glow-cyan/30">
                 {candidates.map((c, index) => {
                     const startPercent = (c.startMs / durationMs) * 100;
                     const endPercent = (c.endMs / durationMs) * 100;
@@ -44,35 +29,49 @@ const Timeline: React.FC = () => {
                     return (
                         <div
                             key={index}
-                            className={`absolute top-0 h-full border-x-2 cursor-pointer transition-all duration-200 ${isSelected ? 'bg-purple-500/30 border-purple-400 z-10' : 'bg-green-500/20 border-green-400 hover:bg-green-500/30'}`}
+                            className={`absolute top-0 h-full transition-all duration-200 cursor-pointer group
+                              ${isSelected ? 'bg-star-gold/40 z-10' : 'bg-glow-cyan/30 hover:bg-glow-cyan/40'}`}
                             style={{
                                 left: `${startPercent}%`,
                                 width: `${Math.max(0.5, endPercent - startPercent)}%`,
                             }}
-                            onClick={() => handleCandidateClick(c)}
-                            title={`Candidate ${index + 1} (Score: ${c.score.toFixed(3)})`}
+                            onClick={() => selectCandidate(c)}
+                            title={`Score: ${c.score.toFixed(3)}`}
                         >
-                            <div className={`absolute -top-5 text-xs px-1 rounded ${isSelected ? 'bg-purple-500' : 'bg-green-500'}`}>
-                                #{index + 1}
-                            </div>
+                           <div className={`w-1 h-full absolute top-0 left-0 ${isSelected ? 'bg-star-gold' : 'bg-glow-cyan'}`} />
+                           <div className={`w-1 h-full absolute top-0 right-0 ${isSelected ? 'bg-star-gold' : 'bg-glow-cyan'}`} />
                         </div>
                     );
                 })}
             </div>
-            <div className="mt-4">
+            <div className="mt-4 max-h-48 overflow-y-auto pr-2">
                 {candidates.length > 0 ? (
                     <ul className="space-y-2">
                         {candidates.map((c, i) => (
                              <li 
                                 key={i} 
-                                onClick={() => handleCandidateClick(c)}
-                                className={`p-2 rounded cursor-pointer transition-colors ${selectedCandidate === c ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}>
-                                Candidate #{i + 1}: {(c.startMs / 1000).toFixed(2)}s to {(c.endMs / 1000).toFixed(2)}s (Score: {c.score.toFixed(3)})
+                                onClick={() => selectCandidate(c)}
+                                className={`p-3 rounded-lg cursor-pointer transition-all duration-200 border-2
+                                  ${selectedCandidate === c ? 'bg-nebula-purple border-star-gold' : 'bg-deep-purple/80 border-glow-cyan/30 hover:border-glow-cyan/70'}`}>
+                                <div className="flex justify-between items-center">
+                                    <span className="font-semibold text-glow-cyan">Candidate #{i + 1}</span>
+                                    <span className={`font-bold px-2 py-0.5 rounded-full text-sm ${selectedCandidate === c ? 'bg-star-gold text-deep-purple' : 'bg-cosmic-blue text-star-gold'}`}>
+                                      Score: {c.score.toFixed(3)}
+                                    </span>
+                                </div>
+                                <div className="text-xs text-glow-cyan/70 mt-1.5 flex justify-between">
+                                  <span>{(c.startMs / 1000).toFixed(2)}s &rarr; {(c.endMs / 1000).toFixed(2)}s</span>
+                                  <span className="font-mono">
+                                    SSIM: {c.scores.ssim.toFixed(2)} | HIST: {c.scores.hist.toFixed(2)} | FLOW: {c.scores.flowError.toFixed(3)}
+                                  </span>
+                                </div>
                              </li>
                         ))}
                     </ul>
                 ) : (
-                    <p className="text-gray-400 text-center">No suitable loop candidates found.</p>
+                     <div className="h-32 flex items-center justify-center">
+                        <p className="text-glow-cyan/70 text-center">No suitable loop candidates found.</p>
+                     </div>
                 )}
             </div>
         </div>

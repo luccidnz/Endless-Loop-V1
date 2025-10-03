@@ -1,35 +1,35 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import { RenderWorkerMessage } from '../types';
+import { fetchFile } from '@ffmpeg/util';
+import type { RenderRequest, RenderWorkerMessage, WorkerMessage } from '../types';
 
 let ffmpeg: FFmpeg | null = null;
 
-self.onmessage = async (event: MessageEvent<RenderWorkerMessage>) => {
+const FFMPEG_CORE_URL = '/vendor/ffmpeg/ffmpeg-core.js';
+const FFMPEG_WASM_URL = '/vendor/ffmpeg/ffmpeg-core.wasm';
+
+async function getFfmpeg(): Promise<FFmpeg> {
+    if (ffmpeg) return ffmpeg;
+    ffmpeg = new FFmpeg();
+    ffmpeg.on('progress', ({ progress }) => {
+        postMessage({
+            type: 'PROGRESS',
+            payload: { progress: progress * 100, message: `Rendering video...` },
+        });
+    });
+    await ffmpeg.load({ coreURL: FFMPEG_CORE_URL, wasmURL: FFMPEG_WASM_URL });
+    return ffmpeg;
+}
+
+self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderRequest }>) => {
   if (event.data.type !== 'RENDER') return;
 
   try {
-    if (!ffmpeg) {
-      ffmpeg = new FFmpeg();
-      ffmpeg.on('log', ({ message }) => {
-        // console.log(message);
-      });
-      ffmpeg.on('progress', ({ progress, time }) => {
-        self.postMessage({
-          type: 'PROGRESS',
-          payload: { progress: Math.min(progress, 1) * 100, message: `Rendering...` },
-        });
-      });
-      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-      await ffmpeg.load({
-          coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-          wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
-    }
+    postMessage({ type: 'PROGRESS', payload: { progress: 0, message: 'Loading rendering engine...' } });
+    const ffmpeg = await getFfmpeg();
 
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 0, message: 'Preparing render...' } });
+    postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Preparing video file...' } });
     const { file, options } = event.data.payload;
-    const { candidate, format, crossfadeMs, pingPong } = options;
-
+    const { candidate, format, crossfadeMs, pingPong, renderMode } = options;
     await ffmpeg.writeFile('input.vid', await fetchFile(file));
     
     const startSec = candidate.startMs / 1000;
@@ -45,7 +45,7 @@ self.onmessage = async (event: MessageEvent<RenderWorkerMessage>) => {
           '-i', 'input.vid',
           '-ss', `${startSec}`,
           '-t', `${durationSec}`,
-          '-vf', 'fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
+          '-vf', 'fps=15,scale=512:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse',
           '-loop', '0',
           outputFilename
       ];
@@ -56,37 +56,47 @@ self.onmessage = async (event: MessageEvent<RenderWorkerMessage>) => {
           `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v_forward];` +
           `[v_forward]reverse[v_reversed];` +
           `[v_forward][v_reversed]concat=n=2:v=1:a=0[v_out]`,
-          '-map', '[v_out]',
+          '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast',
           outputFilename
       ];
-    } else if (crossfadeMs > 0 && durationSec > crossfadeSec * 2) {
-       // Using xfade filter for simplicity and robustness
+    } else if (renderMode === 'flow_morph' && crossfadeSec > 0) {
        const fadeOffset = durationSec - crossfadeSec;
        command = [
         '-i', 'input.vid',
         '-filter_complex',
         `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v];` +
         `[v]split[v_main][v_fade];` +
-        `[v_main][v_fade]xfade=transition=fade:duration=${crossfadeSec}:offset=${fadeOffset}[v_out]`,
-        '-map', '[v_out]',
-        '-c:v', 'libx264',
+        `[v_main][v_fade]xfade=transition=fade:duration=${crossfadeSec}:offset=${fadeOffset},framerate=30[v_out]`,
+        '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'medium',
         outputFilename
        ];
-    } else {
+    } else if (renderMode === 'crossfade' && crossfadeSec > 0) {
+        const fadeOffset = durationSec - crossfadeSec;
+        command = [
+         '-i', 'input.vid',
+         '-filter_complex',
+         `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v];` +
+         `[v]split[v_main][v_fade];` +
+         `[v_main][v_fade]xfade=transition=fade:duration=${crossfadeSec}:offset=${fadeOffset},framerate=30[v_out]`,
+         '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast',
+         outputFilename
+        ];
+    } else { // 'cut' mode
       command = [
           '-ss', `${startSec}`,
           '-i', 'input.vid',
           '-t', `${durationSec}`,
-          '-c:v', 'libx264', // Re-encode to ensure clean cut
+          '-c:v', 'libx264',
           '-preset', 'fast',
+          '-an', // remove audio
           outputFilename
       ];
     }
 
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 20, message: 'Executing FFMPEG...' } });
+    postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Executing render command...' } });
     await ffmpeg.exec(command);
 
-    self.postMessage({ type: 'PROGRESS', payload: { progress: 95, message: 'Finalizing...' } });
+    postMessage({ type: 'PROGRESS', payload: { progress: 98, message: 'Finalizing...' } });
     const data = await ffmpeg.readFile(outputFilename);
     
     await ffmpeg.deleteFile('input.vid');
@@ -96,13 +106,17 @@ self.onmessage = async (event: MessageEvent<RenderWorkerMessage>) => {
     const blob = new Blob([(data as Uint8Array).buffer], { type: mimeType });
     const url = URL.createObjectURL(blob);
     
-    self.postMessage({
+    postMessage({
       type: 'RESULT',
       payload: { blob, url },
     });
 
   } catch (e: any) {
     console.error(e);
-    self.postMessage({ type: 'ERROR', payload: { message: e.message || 'Render failed.' } });
+    postMessage({ type: 'ERROR', payload: { message: e.message || 'Render failed.' } });
   }
 };
+
+function postMessage(message: WorkerMessage<{ blob: Blob, url: string }>) {
+    self.postMessage(message);
+}

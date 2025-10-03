@@ -1,6 +1,6 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
-import type { AnalysisResult, AnalysisRequest, LoopCandidate, WorkerMessage } from '../types';
+import type { AnalysisResult, AnalysisRequest, LoopCandidate, WorkerMessage, AnalysisWorkerMessage } from '../types';
 
 declare const cv: any; // OpenCV.js is loaded via importScripts
 
@@ -63,13 +63,13 @@ async function getFfmpeg(): Promise<FFmpeg> {
 self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisRequest }>) => {
     if (event.data.type !== 'ANALYZE') return;
 
+    const { file, duration, options, id } = event.data.payload;
     try {
-        const { file, duration, options } = event.data.payload;
         
-        postMessage({ type: 'PROGRESS', payload: { progress: 0, message: 'Loading analysis tools...' } });
+        postMessage({ type: 'PROGRESS', payload: { progress: 0, message: 'Loading analysis tools...', id } });
         await Promise.all([getFfmpeg(), loadCv()]);
 
-        postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Preparing video file...' } });
+        postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Preparing video file...', id } });
         await ffmpeg!.writeFile('input.vid', await fetchFile(file));
 
         // Get video dimensions
@@ -78,11 +78,14 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         ffmpeg!.on('log', ({ message }) => { infoStr += message + '\n'; });
         await ffmpeg!.exec(infoCmd);
         ffmpeg!.on('log', () => {}); // Clear logger
-        const dimMatch = infoStr.match(/, (\d{2,4})x(\d{2,4}) /);
+        
+        // FIX: Replaced fragile regex with a more robust one to correctly parse video dimensions from ffmpeg's output.
+        const dimMatch = infoStr.match(/Stream.*Video:.*,.*?(\d{2,5})x(\d{2,5})/);
+        
         if (!dimMatch) throw new Error("Could not determine video dimensions.");
         const videoDimensions = { width: parseInt(dimMatch[1]), height: parseInt(dimMatch[2]) };
 
-        postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Extracting frames...' } });
+        postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Extracting frames...', id } });
         const FPS = 12;
         const ANALYSIS_WIDTH = 320;
         const command = ['-i', 'input.vid', '-vf', `fps=${FPS},scale=${ANALYSIS_WIDTH}:-1`, '-q:v', '5', 'frame-%04d.jpg'];
@@ -92,7 +95,7 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         
         const frameData = [];
         for (let i = 0; i < frameFiles.length; i++) {
-            postMessage({ type: 'PROGRESS', payload: { progress: 20 + 40 * (i / frameFiles.length), message: `Processing frame ${i+1}/${frameFiles.length}` } });
+            postMessage({ type: 'PROGRESS', payload: { progress: 20 + 40 * (i / frameFiles.length), message: `Processing frame ${i+1}/${frameFiles.length}`, id } });
             const frameName = frameFiles[i];
             const fileData = await ffmpeg!.readFile(frameName);
             const img = cv.imdecode(new Uint8Array(fileData as ArrayBuffer), cv.IMREAD_COLOR);
@@ -110,14 +113,14 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
             hsv.delete();
         }
 
-        postMessage({ type: 'PROGRESS', payload: { progress: 60, message: 'Analyzing frame similarity...' } });
+        postMessage({ type: 'PROGRESS', payload: { progress: 60, message: 'Analyzing frame similarity...', id } });
         const candidates: LoopCandidate[] = [];
         const minFrameDist = Math.floor(options.minLoopSecs * FPS);
         const maxFrameDist = Math.floor(options.maxLoopSecs * FPS);
         const numFrames = frameData.length;
 
         for (let i = 0; i < numFrames - minFrameDist; i++) {
-            postMessage({ type: 'PROGRESS', payload: { progress: 60 + 30 * (i / numFrames), message: `Finding loop candidates...` } });
+            postMessage({ type: 'PROGRESS', payload: { progress: 60 + 30 * (i / numFrames), message: `Finding loop candidates...`, id } });
             for (let j = i + minFrameDist; j < Math.min(i + maxFrameDist, numFrames); j++) {
                 const frame1 = frameData[i];
                 const frame2 = frameData[j];
@@ -151,7 +154,7 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
             }
         }
         
-        postMessage({ type: 'PROGRESS', payload: { progress: 95, message: 'Finalizing...' } });
+        postMessage({ type: 'PROGRESS', payload: { progress: 95, message: 'Finalizing...', id } });
         candidates.sort((a, b) => b.score - a.score);
         const topCandidates = candidates.slice(0, 10);
         
@@ -169,17 +172,18 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
                 const closestCandidate = topCandidates.find(c => time >= c.startMs && time <= c.endMs);
                 return closestCandidate ? closestCandidate.score * 0.8 : Math.random() * 0.2;
             }),
+            id,
         };
 
         postMessage({ type: 'RESULT', payload: result });
 
     } catch (e: any) {
         console.error(e);
-        postMessage({ type: 'ERROR', payload: { message: e.message || 'Analysis failed.' } });
+        postMessage({ type: 'ERROR', payload: { message: e.message || 'Analysis failed.', id } });
     }
 };
 
-function postMessage(message: WorkerMessage<AnalysisResult>) {
+function postMessage(message: AnalysisWorkerMessage) {
     self.postMessage(message);
 }
 

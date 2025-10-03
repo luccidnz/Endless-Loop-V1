@@ -1,4 +1,5 @@
 
+
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import type { RenderRequest, RenderWorkerMessage, WorkerMessage } from '../types';
@@ -64,8 +65,8 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
           outputFilename
       ];
     } else if (renderMode === 'flow_morph' && crossfadeSec > 0) {
-       // A more sophisticated blend using motion interpolation for a "morph" effect
        const loopDuration = durationSec - crossfadeSec;
+       const transitionTrimStart = crossfadeSec / 2;
        command = [
         '-i', 'input.vid',
         '-filter_complex',
@@ -75,7 +76,8 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
         `[v]trim=duration=${crossfadeSec},setpts=PTS-STARTPTS[start_part];` +
         `[end_part][start_part]concat=n=2:v=1[cross_section];` +
         `[cross_section]minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1[interpolated];` +
-        `[main][interpolated]concat=n=2:v=1[v_out]`,
+        `[interpolated]trim=start=${transitionTrimStart}:duration=${crossfadeSec},setpts=PTS-STARTPTS[transition];` +
+        `[main][transition]concat=n=2:v=1,framerate=30[v_out]`,
         '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'medium', '-an',
         outputFilename
        ];

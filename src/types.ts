@@ -15,6 +15,7 @@ export interface AnalysisResult {
   heatmap: number[];
   durationMs: number;
   videoDimensions: { width: number, height: number };
+  id?: string;
 }
 
 export type RenderMode = 'cut' | 'crossfade' | 'flow_morph';
@@ -37,6 +38,7 @@ export type AnalysisRequest = {
     minLoopSecs: number;
     maxLoopSecs: number;
   };
+  id?: string;
 };
 
 export type RenderRequest = {
@@ -45,9 +47,9 @@ export type RenderRequest = {
 };
 
 export type WorkerMessage<T> =
-  | { type: 'PROGRESS'; payload: { message: string, progress: number } }
+  | { type: 'PROGRESS'; payload: { message: string, progress: number, id?: string } }
   | { type: 'RESULT'; payload: T }
-  | { type: 'ERROR'; payload: { message: string } };
+  | { type: 'ERROR'; payload: { message: string, id?: string } };
 
 export type AnalysisWorkerMessage = WorkerMessage<AnalysisResult>;
 export type RenderWorkerMessage = WorkerMessage<{ blob: Blob, url: string }>;

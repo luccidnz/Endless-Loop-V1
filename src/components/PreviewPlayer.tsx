@@ -33,29 +33,57 @@ const PreviewPlayer: React.FC = () => {
     };
   }, [renderedVideoUrl]);
 
+  // FIX: Re-implemented preview looping logic to be robust. It now correctly starts and stops based on the video's
+  // play/pause/seeking state, preventing the previous infinite loop that ignored user controls.
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !selectedCandidate || renderedVideoUrl) return;
 
+    let rafId: number;
     const loopStartSec = selectedCandidate.startMs / 1000;
     const loopEndSec = selectedCandidate.endMs / 1000;
-    let rafId: number;
 
     const checkTime = () => {
-      if (video.currentTime >= loopEndSec || video.currentTime < loopStartSec) {
+      if (video && video.currentTime >= loopEndSec) {
         video.currentTime = loopStartSec;
       }
       rafId = requestAnimationFrame(checkTime);
     };
 
+    const handlePlay = () => {
+      cancelAnimationFrame(rafId); // Ensure no multiple loops are running
+      // When play is initiated, if we are outside the loop region, jump to the start.
+      if (video.currentTime < loopStartSec || video.currentTime >= loopEndSec) {
+        video.currentTime = loopStartSec;
+      }
+      rafId = requestAnimationFrame(checkTime);
+    };
+
+    const handlePauseOrSeek = () => {
+      cancelAnimationFrame(rafId);
+    };
+
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePauseOrSeek);
+    video.addEventListener('seeking', handlePauseOrSeek);
+
+    // Initial nudge into the loop zone if the video is loaded outside of it
     if (video.currentTime < loopStartSec || video.currentTime > loopEndSec) {
       video.currentTime = loopStartSec;
     }
-    
-    rafId = requestAnimationFrame(checkTime);
+
+    // If video is already playing when the candidate changes, kick off the loop
+    if (!video.paused) {
+      handlePlay();
+    }
 
     return () => {
       cancelAnimationFrame(rafId);
+      if (video) {
+        video.removeEventListener('play', handlePlay);
+        video.removeEventListener('pause', handlePauseOrSeek);
+        video.removeEventListener('seeking', handlePauseOrSeek);
+      }
     };
   }, [selectedCandidate, renderedVideoUrl]);
 

@@ -19,24 +19,24 @@ export const TestPage: React.FC = () => {
         
         workerRef.current.onmessage = (event: MessageEvent<AnalysisWorkerMessage>) => {
             const { type, payload } = event.data;
-            const currentTest = Object.keys(testResults).find(key => testResults[key].status.startsWith('Running'));
-            if (!currentTest) return;
+            const testId = payload.id;
+            if (!testId) return;
 
             switch (type) {
                 case 'PROGRESS':
-                    setTestResults(prev => ({ ...prev, [currentTest]: { ...prev[currentTest], status: `Running: ${payload.message}` } }));
+                    setTestResults(prev => ({ ...prev, [testId]: { ...prev[testId], status: `Running: ${payload.message}` } }));
                     break;
                 case 'RESULT':
-                    setTestResults(prev => ({ ...prev, [currentTest]: { result: payload, status: 'Completed' } }));
+                    setTestResults(prev => ({ ...prev, [testId]: { result: payload, status: 'Completed' } }));
                     break;
                 case 'ERROR':
-                    setTestResults(prev => ({ ...prev, [currentTest]: { error: payload.message, status: 'Failed' } }));
+                    setTestResults(prev => ({ ...prev, [testId]: { error: payload.message, status: 'Failed' } }));
                     break;
             }
         };
 
         return () => workerRef.current?.terminate();
-    }, [testResults]);
+    }, []);
 
     const runTest = async (videoPath: string) => {
         try {
@@ -57,7 +57,8 @@ export const TestPage: React.FC = () => {
                 const request: AnalysisRequest = {
                     file,
                     duration,
-                    options: { minLoopSecs: 1.5, maxLoopSecs: 8.0 }
+                    options: { minLoopSecs: 1.5, maxLoopSecs: 8.0 },
+                    id: videoPath
                 };
                 workerRef.current?.postMessage({ type: 'ANALYZE', payload: request });
             };

@@ -21,34 +21,33 @@ const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
 
 async function loadCv() {
     if (cvLoaded) return;
-    
-    // Module workers don't support `importScripts`. We must fetch and `eval` the script.
+
     try {
+        // Module workers don't support `importScripts`. We must fetch and `eval` the script.
         const response = await fetch(OPENCV_URL);
         if (!response.ok) throw new Error(`Failed to fetch opencv.js: ${response.statusText}. Did you place it in the /public folder?`);
         const script = await response.text();
-        self.eval(script);
+        self.eval(script); // This defines `cv` on the global scope
     } catch (error) {
         console.error('Error loading OpenCV.js:', error);
-        throw new Error('Failed to fetch opencv.js. Please ensure it is in the /public directory.');
+        throw new Error('Failed to load opencv.js script. Check network tab and console for errors.');
     }
 
+    // Poll for the `cv` object to be fully initialized.
+    // We know it's ready when core functions like `cv.cvtColor` are available.
     return new Promise<void>((resolve, reject) => {
         const startTime = Date.now();
-        const checkCvReady = () => {
-            if (typeof cv !== 'undefined' && cv.Mat) {
-                // A more robust check for Emscripten-compiled libraries is to wait for onRuntimeInitialized
-                cv.onRuntimeInitialized = () => {
-                    cvLoaded = true;
-                    resolve();
-                }
-            } else if (Date.now() - startTime > 15000) { // 15s timeout, opencv can be large
-                reject(new Error('Timed out waiting for OpenCV.js to initialize.'));
-            } else {
-                setTimeout(checkCvReady, 100);
+        const intervalId = setInterval(() => {
+            // Check if the global `cv` object exists and has a key function.
+            if (typeof cv !== 'undefined' && typeof cv.cvtColor === 'function') {
+                clearInterval(intervalId);
+                cvLoaded = true;
+                resolve();
+            } else if (Date.now() - startTime > 20000) { // 20-second timeout
+                clearInterval(intervalId);
+                reject(new Error('Timed out waiting for OpenCV.js to initialize. It might be a large file or there was a network issue.'));
             }
-        };
-        checkCvReady();
+        }, 100);
     });
 }
 

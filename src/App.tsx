@@ -8,15 +8,11 @@ import Spinner from './components/Spinner';
 import DevInfo from './components/DevInfo';
 import { AnalysisWorkerMessage, RenderWorkerMessage, RenderOptions, AnalysisRequest, RenderRequest } from './types';
 
-// Fix for TypeScript errors: "Cannot find type definition file for 'vite/client'" and "Property 'env' does not exist on type 'ImportMeta'".
-// This manually declares the types for Vite's `import.meta.env` when the default triple-slash directive fails.
-declare global {
-  interface ImportMeta {
-    readonly env: {
-      readonly DEV: boolean;
-    };
-  }
-}
+// FIX: Removed conflicting global declaration for `ImportMeta`.
+// The error "Subsequent property declarations must have the same type" indicates that
+// Vite's client types are already being loaded correctly, making this manual declaration
+// both redundant and incorrect. The global types for `import.meta.env` are expected
+// to be available project-wide through Vite's default setup.
 
 function App() {
   const { 

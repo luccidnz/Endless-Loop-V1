@@ -7,12 +7,12 @@ declare const cv: any; // OpenCV.js is loaded via importScripts
 let ffmpeg: FFmpeg | null = null;
 let cvLoaded = false;
 
-// FIX: Switched to a CDN that provides the necessary 'Cross-Origin-Resource-Policy' header to comply with the app's security settings (COEP: require-corp).
-const OPENCV_URL = 'https://cdn.jsdelivr.net/npm/opencv.js@4.9.0/opencv.js';
+// FIX: Aligned the OpenCV URL to the same CDN as all other dependencies, resolving a critical Cross-Origin-Embedder-Policy (COEP) conflict.
+const OPENCV_URL = 'https://aistudiocdn.com/opencv.js@^4.9.0';
 
-// Using unpkg as a reliable CDN for ffmpeg core assets
-const FFMPEG_CORE_VERSION = '0.12.6';
-const FFMPEG_BASE_URL = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
+// Aligning with the importmap to ensure all ffmpeg assets come from the same origin.
+const FFMPEG_CORE_VERSION = '0.12.15';
+const FFMPEG_BASE_URL = `https://aistudiocdn.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
 const FFMPEG_CORE_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.js`;
 const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
 

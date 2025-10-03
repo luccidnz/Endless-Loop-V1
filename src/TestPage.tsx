@@ -1,3 +1,6 @@
+// FIX: Added a triple-slash directive to provide DOM type definitions, resolving the error "Cannot find name 'document'".
+/// <reference lib="dom" />
+
 import React, { useState, useRef, useEffect } from 'react';
 import { AnalysisResult, AnalysisWorkerMessage, LoopCandidate, AnalysisRequest } from './types';
 

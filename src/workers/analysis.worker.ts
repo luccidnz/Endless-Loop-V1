@@ -7,9 +7,13 @@ declare const cv: any; // OpenCV.js is loaded via importScripts
 let ffmpeg: FFmpeg | null = null;
 let cvLoaded = false;
 
-const OPENCV_URL = '/vendor/opencv.js';
-const FFMPEG_CORE_URL = '/vendor/ffmpeg/ffmpeg-core.js';
-const FFMPEG_WASM_URL = '/vendor/ffmpeg/ffmpeg-core.wasm';
+const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
+// Using unpkg as a reliable CDN for ffmpeg core assets
+const FFMPEG_CORE_VERSION = '0.12.6';
+const FFMPEG_BASE_URL = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
+const FFMPEG_CORE_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.js`;
+const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
+
 
 async function loadCv() {
     if (cvLoaded) return;

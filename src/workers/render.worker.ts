@@ -4,8 +4,11 @@ import type { RenderRequest, RenderWorkerMessage, WorkerMessage } from '../types
 
 let ffmpeg: FFmpeg | null = null;
 
-const FFMPEG_CORE_URL = '/vendor/ffmpeg/ffmpeg-core.js';
-const FFMPEG_WASM_URL = '/vendor/ffmpeg/ffmpeg-core.wasm';
+// Using unpkg as a reliable CDN for ffmpeg core assets
+const FFMPEG_CORE_VERSION = '0.12.6';
+const FFMPEG_BASE_URL = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
+const FFMPEG_CORE_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.js`;
+const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
 
 async function getFfmpeg(): Promise<FFmpeg> {
     if (ffmpeg) return ffmpeg;

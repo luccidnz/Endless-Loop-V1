@@ -1,3 +1,6 @@
+// FIX: Added a triple-slash directive to provide DOM type definitions, resolving the error "Cannot find name 'document'".
+/// <reference lib="dom" />
+
 import { create } from 'zustand';
 import { AnalysisResult, LoopCandidate, RenderMode, RenderOptions } from '../types';
 

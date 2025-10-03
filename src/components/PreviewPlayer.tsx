@@ -1,3 +1,6 @@
+// FIX: Added a triple-slash directive to provide DOM type definitions, resolving the error "Cannot find name 'HTMLVideoElement'".
+/// <reference lib="dom" />
+
 import React, { useRef, useEffect, useState } from 'react';
 import { useLoopStore } from '../store/useLoopStore';
 

@@ -7,7 +7,9 @@ declare const cv: any; // OpenCV.js is loaded via importScripts
 let ffmpeg: FFmpeg | null = null;
 let cvLoaded = false;
 
-const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
+// FIX: Switched to a CDN that provides the necessary 'Cross-Origin-Resource-Policy' header to comply with the app's security settings (COEP: require-corp).
+const OPENCV_URL = 'https://cdn.jsdelivr.net/npm/opencv.js@4.9.0/opencv.js';
+
 // Using unpkg as a reliable CDN for ffmpeg core assets
 const FFMPEG_CORE_VERSION = '0.12.6';
 const FFMPEG_BASE_URL = `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;

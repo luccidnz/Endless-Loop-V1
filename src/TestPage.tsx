@@ -11,7 +11,8 @@ const SAMPLE_VIDEOS = [
 
 export const TestPage: React.FC = () => {
     const [testResults, setTestResults] = useState<Record<string, { result?: AnalysisResult, error?: string, status: string }>>({});
-    const workerRef = useRef<Worker>();
+    // FIX: Initialized useRef with null to resolve "Expected 1 arguments, but got 0." error.
+    const workerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
         workerRef.current = new Worker(new URL('./workers/analysis.worker.ts', import.meta.url), { type: 'module' });

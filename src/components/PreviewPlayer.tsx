@@ -113,11 +113,13 @@ const PreviewPlayer: React.FC = () => {
         <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/80 border border-star-gold p-2 rounded-lg pointer-events-none flex items-center gap-2">
             <div className="w-40 h-24 overflow-hidden relative border border-glow-cyan/50 rounded">
                 <p className="absolute top-1 left-1 text-xs bg-black/50 px-1 rounded z-10">End</p>
-                <video src={displayUrl} muted className="w-full h-full object-cover" style={{transform: 'scale(1.5)'}} ref={v => v && (v.currentTime = selectedCandidate.endMs / 1000 - 0.03)} />
+                {/* FIX: Changed ref callback to a block statement to avoid returning a value, resolving TypeScript error. */}
+                <video src={displayUrl} muted className="w-full h-full object-cover" style={{transform: 'scale(1.5)'}} ref={v => {if (v) v.currentTime = selectedCandidate.endMs / 1000 - 0.03}} />
             </div>
             <div className="w-40 h-24 overflow-hidden relative border border-glow-cyan/50 rounded">
                 <p className="absolute top-1 left-1 text-xs bg-black/50 px-1 rounded z-10">Start</p>
-                <video src={displayUrl} muted className="w-full h-full object-cover" style={{transform: 'scale(1.5)'}} ref={v => v && (v.currentTime = selectedCandidate.startMs / 1000)} />
+                {/* FIX: Changed ref callback to a block statement to avoid returning a value, resolving TypeScript error. */}
+                <video src={displayUrl} muted className="w-full h-full object-cover" style={{transform: 'scale(1.5)'}} ref={v => {if (v) v.currentTime = selectedCandidate.startMs / 1000}} />
             </div>
         </div>
       )}

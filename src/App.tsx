@@ -25,8 +25,10 @@ function App() {
     setRenderSuccess, selectedCandidate, analysisResult, renderOptions
   } = useLoopStore();
 
-  const analysisWorkerRef = useRef<Worker>();
-  const renderWorkerRef = useRef<Worker>();
+  // FIX: Initialized useRef with null to resolve "Expected 1 arguments, but got 0." error.
+  const analysisWorkerRef = useRef<Worker | null>(null);
+  // FIX: Initialized useRef with null to resolve "Expected 1 arguments, but got 0." error.
+  const renderWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
     analysisWorkerRef.current = new Worker(new URL('./workers/analysis.worker.ts', import.meta.url), { type: 'module' });

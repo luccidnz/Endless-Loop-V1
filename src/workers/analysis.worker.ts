@@ -7,8 +7,8 @@ declare const cv: any; // OpenCV.js is loaded via importScripts
 let ffmpeg: FFmpeg | null = null;
 let cvLoaded = false;
 
-// FIX: Aligned the OpenCV URL to the same CDN as all other dependencies, resolving a critical Cross-Origin-Embedder-Policy (COEP) conflict.
-const OPENCV_URL = 'https://aistudiocdn.com/opencv.js@^4.9.0';
+// Reverted to the official OpenCV URL. With COEP/COOP disabled, this should now load correctly.
+const OPENCV_URL = 'https://docs.opencv.org/4.9.0/opencv.js';
 
 // Aligning with the importmap to ensure all ffmpeg assets come from the same origin.
 const FFMPEG_CORE_VERSION = '0.12.15';
@@ -28,7 +28,7 @@ async function loadCv() {
         self.eval(script);
     } catch (error) {
         console.error('Error loading OpenCV.js:', error);
-        throw error;
+        throw new Error('Failed to fetch opencv.js');
     }
 
     return new Promise<void>((resolve, reject) => {

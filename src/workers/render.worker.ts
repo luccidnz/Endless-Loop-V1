@@ -1,3 +1,4 @@
+
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import type { RenderRequest, RenderWorkerMessage, WorkerMessage } from '../types';
@@ -58,19 +59,24 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
           '-filter_complex',
           `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v_forward];` +
           `[v_forward]reverse[v_reversed];` +
-          `[v_forward][v_reversed]concat=n=2:v=1:a=0[v_out]`,
-          '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast',
+          `[v_forward][v_reversed]concat=n=2:v=1:a=0,framerate=30[v_out]`,
+          '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast', '-an',
           outputFilename
       ];
     } else if (renderMode === 'flow_morph' && crossfadeSec > 0) {
-       const fadeOffset = durationSec - crossfadeSec;
+       // A more sophisticated blend using motion interpolation for a "morph" effect
+       const loopDuration = durationSec - crossfadeSec;
        command = [
         '-i', 'input.vid',
         '-filter_complex',
         `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v];` +
-        `[v]split[v_main][v_fade];` +
-        `[v_main][v_fade]xfade=transition=fade:duration=${crossfadeSec}:offset=${fadeOffset},framerate=30[v_out]`,
-        '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'medium',
+        `[v]trim=duration=${loopDuration},setpts=PTS-STARTPTS[main];` +
+        `[v]trim=start=${loopDuration},setpts=PTS-STARTPTS[end_part];` +
+        `[v]trim=duration=${crossfadeSec},setpts=PTS-STARTPTS[start_part];` +
+        `[end_part][start_part]concat=n=2:v=1[cross_section];` +
+        `[cross_section]minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1[interpolated];` +
+        `[main][interpolated]concat=n=2:v=1[v_out]`,
+        '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'medium', '-an',
         outputFilename
        ];
     } else if (renderMode === 'crossfade' && crossfadeSec > 0) {
@@ -81,14 +87,15 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
          `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v];` +
          `[v]split[v_main][v_fade];` +
          `[v_main][v_fade]xfade=transition=fade:duration=${crossfadeSec}:offset=${fadeOffset},framerate=30[v_out]`,
-         '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast',
+         '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast', '-an',
          outputFilename
         ];
-    } else { // 'cut' mode
+    } else { // 'cut' mode - precise trim
       command = [
-          '-ss', `${startSec}`,
           '-i', 'input.vid',
-          '-t', `${durationSec}`,
+          '-filter_complex',
+          `[0:v]trim=${startSec}:${endSec},setpts=PTS-STARTPTS[v_out]`,
+          '-map', '[v_out]',
           '-c:v', 'libx264',
           '-preset', 'fast',
           '-an', // remove audio

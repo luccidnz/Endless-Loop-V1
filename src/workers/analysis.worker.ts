@@ -35,8 +35,11 @@ async function loadCv() {
         const startTime = Date.now();
         const checkCvReady = () => {
             if (typeof cv !== 'undefined' && cv.Mat) {
-                cvLoaded = true;
-                resolve();
+                // A more robust check for Emscripten-compiled libraries is to wait for onRuntimeInitialized
+                cv.onRuntimeInitialized = () => {
+                    cvLoaded = true;
+                    resolve();
+                }
             } else if (Date.now() - startTime > 15000) { // 15s timeout, opencv can be large
                 reject(new Error('Timed out waiting for OpenCV.js to initialize.'));
             } else {
@@ -198,7 +201,8 @@ function simpleSsim(mat1: any, mat2: any): number {
     const covarMat = new cv.Mat();
     const meanMat = new cv.Mat();
     cv.calcCovarMatrix(mat1, mat2, covarMat, meanMat, cv.COVAR_NORMAL | cv.COVAR_ROWS);
-    const covariance = covarMat.data64F[0];
+    // FIX: Correctly access the covariance (index 1) from the covariance matrix, not the variance (index 0).
+    const covariance = covarMat.data64F[1];
     covarMat.delete();
     meanMat.delete();
 

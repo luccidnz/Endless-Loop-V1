@@ -18,36 +18,51 @@ const FFMPEG_BASE_URL = `https://aistudiocdn.com/@ffmpeg/core@${FFMPEG_CORE_VERS
 const FFMPEG_CORE_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.js`;
 const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
 
+function log(message: string, id?: string) {
+    self.postMessage({ type: 'LOG', payload: { message, id } });
+}
 
 async function loadCv() {
     if (cvLoaded) return;
 
-    try {
-        // Module workers don't support `importScripts`. We must fetch and `eval` the script.
-        const response = await fetch(OPENCV_URL);
-        if (!response.ok) throw new Error(`Failed to fetch opencv.js: ${response.statusText}. Did you place it in the /public folder?`);
-        const script = await response.text();
-        self.eval(script); // This defines `cv` on the global scope
-    } catch (error) {
-        console.error('Error loading OpenCV.js:', error);
-        throw new Error('Failed to load opencv.js script. Check network tab and console for errors.');
-    }
-
-    // Poll for the `cv` object to be fully initialized.
-    // We know it's ready when core functions like `cv.cvtColor` are available.
+    // Use a promise-based approach with the official onRuntimeInitialized callback
+    // to reliably load OpenCV.js, which initializes asynchronously.
     return new Promise<void>((resolve, reject) => {
-        const startTime = Date.now();
-        const intervalId = setInterval(() => {
-            // Check if the global `cv` object exists and has a key function.
-            if (typeof cv !== 'undefined' && typeof cv.cvtColor === 'function') {
-                clearInterval(intervalId);
+        const timeout = setTimeout(() => {
+            reject(new Error('Timed out waiting for OpenCV.js to initialize. It might be a large file or there was a network issue.'));
+        }, 20000); // 20-second timeout
+
+        // OpenCV.js checks for a 'Module' object on the global scope to hook its lifecycle events.
+        (self as any).Module = {
+            onRuntimeInitialized: () => {
+                clearTimeout(timeout);
                 cvLoaded = true;
                 resolve();
-            } else if (Date.now() - startTime > 20000) { // 20-second timeout
-                clearInterval(intervalId);
-                reject(new Error('Timed out waiting for OpenCV.js to initialize. It might be a large file or there was a network issue.'));
+            },
+            // Also handle initialization errors.
+            onAbort: (reason: any) => {
+                clearTimeout(timeout);
+                reject(new Error(`OpenCV.js initialization failed: ${reason}`));
             }
-        }, 100);
+        };
+
+        fetch(OPENCV_URL)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch opencv.js: ${response.statusText}. Did you place it in the /public folder?`);
+                }
+                return response.text();
+            })
+            .then(script => {
+                // Execute the script in the worker's global scope. It will find and use
+                // the `Module` object we defined above.
+                eval(script);
+            })
+            .catch(error => {
+                clearTimeout(timeout);
+                console.error('Error loading OpenCV.js:', error);
+                reject(new Error('Failed to load opencv.js script. Check network tab and console for errors.'));
+            });
     });
 }
 
@@ -68,16 +83,20 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
     if (event.data.type !== 'ANALYZE') return;
 
     const { file, duration, options, id } = event.data.payload;
+    log(`Received job with id: ${id}`, id);
     try {
         
         postMessage({ type: 'PROGRESS', payload: { progress: 0, message: 'Loading analysis tools...', id } });
+        log('Loading FFmpeg and OpenCV...', id);
         await Promise.all([getFfmpeg(), loadCv()]);
+        log('Analysis tools loaded.', id);
 
         postMessage({ type: 'PROGRESS', payload: { progress: 5, message: 'Preparing video file...', id } });
         const ffmpegInstance = await getFfmpeg();
         await ffmpegInstance.writeFile('input.vid', await fetchFile(file));
 
         // Get video dimensions
+        log('Reading video metadata for dimensions...', id);
         const infoCmd = ['-i', 'input.vid', '-hide_banner'];
         let infoStr = '';
         const infoLogger = ({ message }: { message: string }) => { infoStr += message + '\n'; };
@@ -90,6 +109,7 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         
         if (!dimMatch) throw new Error("Could not determine video dimensions.");
         const videoDimensions = { width: parseInt(dimMatch[1]), height: parseInt(dimMatch[2]) };
+        log(`Determined video dimensions: ${videoDimensions.width}x${videoDimensions.height}`, id);
 
         postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Extracting frames...', id } });
         const FPS = 12;
@@ -98,8 +118,10 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         await ffmpegInstance.exec(command);
         
         const frameFiles = (await ffmpegInstance.listDir('.')).filter(f => f.name.startsWith('frame-') && f.name.endsWith('.jpg')).map(f => f.name).sort();
+        log(`Extracted ${frameFiles.length} frames at ${FPS}FPS.`, id);
         
         const frameData = [];
+        log('Processing frames with OpenCV...', id);
         for (let i = 0; i < frameFiles.length; i++) {
             postMessage({ type: 'PROGRESS', payload: { progress: 20 + 40 * (i / frameFiles.length), message: `Processing frame ${i+1}/${frameFiles.length}`, id } });
             const frameName = frameFiles[i];
@@ -120,13 +142,18 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         }
 
         postMessage({ type: 'PROGRESS', payload: { progress: 60, message: 'Analyzing frame similarity...', id } });
+        log('Starting frame similarity analysis loop.', id);
         const candidates: LoopCandidate[] = [];
         const minFrameDist = Math.floor(options.minLoopSecs * FPS);
         const maxFrameDist = Math.floor(options.maxLoopSecs * FPS);
         const numFrames = frameData.length;
+        const loopRange = numFrames - minFrameDist;
 
-        for (let i = 0; i < numFrames - minFrameDist; i++) {
-            postMessage({ type: 'PROGRESS', payload: { progress: 60 + 30 * (i / numFrames), message: `Finding loop candidates...`, id } });
+        for (let i = 0; i < loopRange; i++) {
+             // FIX: Improved progress reporting by making the message more descriptive during the longest phase of analysis.
+            const progress = 60 + 30 * (i / loopRange);
+            postMessage({ type: 'PROGRESS', payload: { progress, message: `Analyzing similarity (${i + 1}/${loopRange})...`, id } });
+
             for (let j = i + minFrameDist; j < Math.min(i + maxFrameDist, numFrames); j++) {
                 const frame1 = frameData[i];
                 const frame2 = frameData[j];
@@ -159,12 +186,14 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
                 }
             }
         }
+        log(`Found ${candidates.length} potential candidates. Sorting and selecting top 10.`, id);
         
         postMessage({ type: 'PROGRESS', payload: { progress: 95, message: 'Finalizing...', id } });
         candidates.sort((a, b) => b.score - a.score);
         const topCandidates = candidates.slice(0, 10);
         
         // Cleanup
+        log('Cleaning up OpenCV and FFmpeg memory...', id);
         frameData.forEach(data => { data.gray.delete(); data.hist.delete(); });
         for (const f of frameFiles) await ffmpegInstance.deleteFile(f);
         await ffmpegInstance.deleteFile('input.vid');
@@ -180,11 +209,13 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
             }),
             id,
         };
-
+        
+        log('Analysis complete. Posting result.', id);
         postMessage({ type: 'RESULT', payload: result });
 
     } catch (e: any) {
         console.error(e);
+        log(`CRITICAL ERROR: ${e.message}`, id);
         postMessage({ type: 'ERROR', payload: { message: e.message || 'Analysis failed.', id } });
     }
 };

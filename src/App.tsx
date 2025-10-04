@@ -1,3 +1,15 @@
+// FIX: Correctly augment the global `ImportMeta` type to provide type definitions
+// for `import.meta.env`. Using `declare global` is necessary because this file is
+// a module, and this ensures the type augmentation applies globally.
+declare global {
+  interface ImportMeta {
+    readonly env: {
+      readonly DEV: boolean;
+      // Add other environment variables here if needed
+    };
+  }
+}
+
 import React, { useEffect, useMemo, useRef } from 'react';
 import { useLoopStore } from './store/useLoopStore';
 import FileDropzone from './components/FileDropzone';
@@ -7,12 +19,8 @@ import ControlsPanel from './components/ControlsPanel';
 import Spinner from './components/Spinner';
 import DevInfo from './components/DevInfo';
 import { AnalysisWorkerMessage, RenderWorkerMessage, RenderOptions, AnalysisRequest, RenderRequest } from './types';
-
-// FIX: Removed conflicting global declaration for `ImportMeta`.
-// The error "Subsequent property declarations must have the same type" indicates that
-// Vite's client types are already being loaded correctly, making this manual declaration
-// both redundant and incorrect. The global types for `import.meta.env` are expected
-// to be available project-wide through Vite's default setup.
+import { logger } from './lib/logger';
+import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 
 function App() {
   const { 
@@ -27,12 +35,24 @@ function App() {
   const renderWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
+    logger.info('App mounted. Initializing workers.');
     analysisWorkerRef.current = new Worker(new URL('./workers/analysis.worker.ts', import.meta.url), { type: 'module' });
     renderWorkerRef.current = new Worker(new URL('./workers/render.worker.ts', import.meta.url), { type: 'module' });
 
     analysisWorkerRef.current.onmessage = (event: MessageEvent<AnalysisWorkerMessage>) => {
       const { type, payload } = event.data;
+      
+      // FIX: Ignore messages from old, irrelevant analysis jobs to prevent race conditions.
+      const currentJobId = useLoopStore.getState().analysisJobId;
+      if (payload.id && currentJobId && payload.id !== currentJobId) {
+        logger.warn(`Ignoring stale worker message from job ${payload.id}. Current job is ${currentJobId}`);
+        return;
+      }
+      
       switch (type) {
+        case 'LOG':
+          logger.debug(`[AnalysisWorker] ${payload.message}`);
+          break;
         case 'PROGRESS':
           setProgress(payload.progress, payload.message);
           break;
@@ -48,6 +68,9 @@ function App() {
     renderWorkerRef.current.onmessage = (event: MessageEvent<RenderWorkerMessage>) => {
         const { type, payload } = event.data;
         switch (type) {
+          case 'LOG':
+            logger.debug(`[RenderWorker] ${payload.message}`);
+            break;
           case 'PROGRESS':
             setProgress(payload.progress, payload.message);
             break;
@@ -61,6 +84,7 @@ function App() {
       };
 
     return () => {
+      logger.warn('App unmounting. Terminating workers.');
       analysisWorkerRef.current?.terminate();
       renderWorkerRef.current?.terminate();
     };
@@ -69,11 +93,15 @@ function App() {
   const handleAnalyze = () => {
     if (videoFile && videoDuration && status !== 'analyzing') {
       startAnalysis();
+      // Get the unique ID for the new job from the store state.
+      const currentJobId = useLoopStore.getState().analysisJobId;
       const request: AnalysisRequest = {
         file: videoFile,
         duration: videoDuration,
-        options: { minLoopSecs: 1.5, maxLoopSecs: 8.0 }
+        options: { minLoopSecs: 1.5, maxLoopSecs: 8.0 },
+        id: currentJobId || undefined
       };
+      logger.info('Posting ANALYZE request to worker.', { id: request.id });
       analysisWorkerRef.current?.postMessage({ type: 'ANALYZE', payload: request });
     }
   };
@@ -87,6 +115,7 @@ function App() {
         resolution: analysisResult.videoDimensions,
       };
       const request: RenderRequest = { file: videoFile, options: fullRenderOptions };
+      logger.info('Posting RENDER request to worker.', { options: fullRenderOptions });
       renderWorkerRef.current?.postMessage({ type: 'RENDER', payload: request });
     }
   }
@@ -127,6 +156,7 @@ function App() {
         {import.meta.env.DEV && <DevInfo />}
         <p>Crafted for eternity.</p>
       </footer>
+      {import.meta.env.DEV && <DiagnosticsPanel />}
     </div>
   );
 }

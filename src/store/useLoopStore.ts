@@ -3,6 +3,7 @@
 
 import { create } from 'zustand';
 import { AnalysisResult, LoopCandidate, RenderMode, RenderOptions } from '../types';
+import { logger } from '../lib/logger';
 
 type AppState = {
   videoFile: File | null;
@@ -17,6 +18,8 @@ type AppState = {
   selectedCandidate: LoopCandidate | null;
   renderedVideoUrl: string | null;
   
+  analysisJobId: string | null;
+
   renderOptions: Omit<RenderOptions, 'candidate' | 'resolution'>;
 
   // Actions
@@ -30,6 +33,7 @@ type AppState = {
   setRenderSuccess: (url: string) => void;
   setRenderOption: <K extends keyof AppState['renderOptions']>(key: K, value: AppState['renderOptions'][K]) => void;
   reset: () => void;
+  clearError: () => void;
 };
 
 export const useLoopStore = create<AppState>((set, get) => ({
@@ -45,6 +49,8 @@ export const useLoopStore = create<AppState>((set, get) => ({
   analysisResult: null,
   selectedCandidate: null,
   renderedVideoUrl: null,
+  analysisJobId: null,
+  
   renderOptions: {
     format: 'mp4',
     renderMode: 'crossfade',
@@ -54,29 +60,43 @@ export const useLoopStore = create<AppState>((set, get) => ({
 
   // Actions
   setVideoFile: (file) => {
+    logger.info('New video file selected.', { name: file.name, size: file.size, type: file.type });
     get().reset();
     const url = URL.createObjectURL(file);
     const videoEl = document.createElement('video');
     videoEl.src = url;
     videoEl.onloadedmetadata = () => {
+        const duration = videoEl.duration * 1000;
+        logger.info('Video metadata loaded.', { url, duration });
         set({
           videoFile: file,
           videoUrl: url,
-          videoDuration: videoEl.duration * 1000,
+          videoDuration: duration,
           status: 'idle',
         });
         videoEl.remove();
     };
     videoEl.onerror = () => {
+        logger.error('Failed to load video metadata.');
         set({ status: 'error', message: 'Could not load video metadata.' });
         URL.revokeObjectURL(url);
         videoEl.remove();
     }
   },
 
-  startAnalysis: () => set({ status: 'analyzing', progress: 0, message: 'Initiating analysis...' }),
+  startAnalysis: () => {
+    const newJobId = crypto.randomUUID();
+    logger.info('Analysis started.', { jobId: newJobId });
+    set({ 
+    status: 'analyzing', 
+    progress: 0, 
+    message: 'Initiating analysis...',
+    analysisJobId: newJobId,
+    renderedVideoUrl: null, // New analysis invalidates old render
+  })},
   
   setAnalysisSuccess: (result) => {
+    logger.info('Analysis succeeded.', { jobId: result.id, candidateCount: result.candidates.length });
     set({ 
       status: 'analysis_done', 
       analysisResult: result, 
@@ -85,23 +105,45 @@ export const useLoopStore = create<AppState>((set, get) => ({
     });
   },
   
-  setError: (message) => set({ status: 'error', message }),
+  setError: (message) => {
+    logger.error('Store status set to ERROR.', { message });
+    set({ status: 'error', message })
+  },
   
   setProgress: (progress, message) => set({ progress, message }),
 
-  selectCandidate: (candidate) => set({ selectedCandidate: candidate, renderedVideoUrl: null, status: 'analysis_done' }),
+  selectCandidate: (candidate) => {
+    logger.info('Candidate selected.', { candidate });
+    set({ selectedCandidate: candidate, renderedVideoUrl: null, status: 'analysis_done' })
+  },
   
-  startRender: () => set({ status: 'rendering', progress: 0, message: 'Initiating render...' }),
+  startRender: () => {
+    logger.info('Render started.');
+    set({ status: 'rendering', progress: 0, message: 'Initiating render...' })
+  },
   
-  setRenderSuccess: (url) => set({ status: 'render_done', renderedVideoUrl: url }),
+  setRenderSuccess: (url) => {
+    logger.info('Render succeeded.', { url });
+    set({ status: 'render_done', renderedVideoUrl: url })
+  },
 
   setRenderOption: (key, value) => {
+    logger.info('Render option changed.', { key, value });
     set((state) => ({
       renderOptions: { ...state.renderOptions, [key]: value },
     }));
   },
 
+  clearError: () => {
+    logger.warn('Error cleared by user.');
+    set(state => ({
+      status: state.analysisResult ? 'analysis_done' : 'idle',
+      message: '',
+    }))
+  },
+
   reset: () => {
+    logger.warn('State reset.');
     const { videoUrl, renderedVideoUrl } = get();
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     if (renderedVideoUrl) URL.revokeObjectURL(renderedVideoUrl);
@@ -115,6 +157,7 @@ export const useLoopStore = create<AppState>((set, get) => ({
       renderedVideoUrl: null,
       progress: 0,
       message: '',
+      analysisJobId: null,
     });
   },
 }));

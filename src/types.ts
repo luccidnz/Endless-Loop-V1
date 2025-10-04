@@ -49,7 +49,8 @@ export type RenderRequest = {
 export type WorkerMessage<T> =
   | { type: 'PROGRESS'; payload: { message: string, progress: number, id?: string } }
   | { type: 'RESULT'; payload: T }
-  | { type: 'ERROR'; payload: { message: string, id?: string } };
+  | { type: 'ERROR'; payload: { message: string, id?: string } }
+  | { type: 'LOG'; payload: { message: string, id?: string } };
 
 export type AnalysisWorkerMessage = WorkerMessage<AnalysisResult>;
 export type RenderWorkerMessage = WorkerMessage<{ blob: Blob, url: string }>;

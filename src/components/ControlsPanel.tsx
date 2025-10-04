@@ -10,10 +10,12 @@ interface ControlsPanelProps {
 const ControlsPanel: React.FC<ControlsPanelProps> = ({ onAnalyze, onRender }) => {
   const { 
     status,
+    message,
     selectedCandidate,
     renderOptions,
     setRenderOption,
     reset,
+    clearError,
   } = useLoopStore();
 
   const isBusy = status === 'analyzing' || status === 'rendering';
@@ -27,6 +29,19 @@ const ControlsPanel: React.FC<ControlsPanelProps> = ({ onAnalyze, onRender }) =>
 
   return (
     <div className="bg-deep-purple/50 border-2 border-glow-cyan/20 p-6 rounded-lg shadow-lg flex flex-col gap-6 h-full">
+      {status === 'error' && (
+        <div className="bg-red-900/50 border-2 border-red-500 p-4 rounded-lg" role="alert">
+          <h4 className="font-bold text-red-300">An Error Occurred</h4>
+          <p className="text-sm text-red-300/90 mt-1 break-words">{message}</p>
+          <button
+            onClick={clearError}
+            className="mt-3 text-xs bg-red-700 hover:bg-red-600 text-white font-bold py-1 px-3 rounded transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div>
         <h3 className="text-xl font-bold mb-4 text-star-gold">Control Orb</h3>
         <div className="flex flex-col gap-4">

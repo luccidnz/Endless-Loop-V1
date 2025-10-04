@@ -7,16 +7,14 @@ declare const cv: any; // OpenCV.js is loaded via importScripts
 let ffmpeg: FFmpeg | null = null;
 let cvLoaded = false;
 
-// To resolve cross-origin issues, opencv.js is now served locally.
-// Please download it from https://docs.opencv.org/4.9.0/opencv.js
-// and place it in the /public folder of your project.
-const OPENCV_URL = '/opencv.js';
-
-// Aligning with the importmap to ensure all ffmpeg assets come from the same origin.
-const FFMPEG_CORE_VERSION = '0.12.15';
-const FFMPEG_BASE_URL = `https://aistudiocdn.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
+// Local paths for external libraries
+const FFMPEG_BASE_URL = '/ffmpeg';
 const FFMPEG_CORE_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.js`;
 const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
+
+// FIX: These will be populated by the 'INIT' message from the main thread.
+let OPENCV_JS_URL: string | null = null;
+let OPENCV_WASM_URL: string | null = null;
 
 function log(message: string, id?: string) {
     self.postMessage({ type: 'LOG', payload: { message, id } });
@@ -24,45 +22,44 @@ function log(message: string, id?: string) {
 
 async function loadCv() {
     if (cvLoaded) return;
+    if (!OPENCV_JS_URL || !OPENCV_WASM_URL) {
+        throw new Error('OpenCV URLs have not been initialized in the worker.');
+    }
+    log('Loading OpenCV using dynamically provided URLs...');
 
-    // Use a promise-based approach with the official onRuntimeInitialized callback
-    // to reliably load OpenCV.js, which initializes asynchronously.
     return new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-            reject(new Error('Timed out waiting for OpenCV.js to initialize. It might be a large file or there was a network issue.'));
-        }, 20000); // 20-second timeout
+            reject(new Error('Timed out waiting for OpenCV.js to initialize.'));
+        }, 20000);
 
-        // OpenCV.js checks for a 'Module' object on the global scope to hook its lifecycle events.
         (self as any).Module = {
+            locateFile: (path: string) => {
+                if (path.endsWith('.wasm')) {
+                    // Use the URL passed from the main thread
+                    return OPENCV_WASM_URL!;
+                }
+                return path;
+            },
             onRuntimeInitialized: () => {
                 clearTimeout(timeout);
                 cvLoaded = true;
+                log('OpenCV.js runtime initialized successfully.');
                 resolve();
             },
-            // Also handle initialization errors.
             onAbort: (reason: any) => {
                 clearTimeout(timeout);
                 reject(new Error(`OpenCV.js initialization failed: ${reason}`));
             }
         };
 
-        fetch(OPENCV_URL)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch opencv.js: ${response.statusText}. Did you place it in the /public folder?`);
-                }
-                return response.text();
-            })
-            .then(script => {
-                // Execute the script in the worker's global scope. It will find and use
-                // the `Module` object we defined above.
-                eval(script);
-            })
-            .catch(error => {
-                clearTimeout(timeout);
-                console.error('Error loading OpenCV.js:', error);
-                reject(new Error('Failed to load opencv.js script. Check network tab and console for errors.'));
-            });
+        try {
+            // Use the URL passed from the main thread
+            importScripts(OPENCV_JS_URL!);
+        } catch (error) {
+             clearTimeout(timeout);
+             console.error(`Error importing OpenCV.js script from URL: ${OPENCV_JS_URL}`, error);
+             reject(new Error(`Failed to import opencv.js script from ${OPENCV_JS_URL}. The file could not be loaded.`));
+        }
     });
 }
 
@@ -75,14 +72,44 @@ async function getFfmpeg(): Promise<FFmpeg> {
             payload: { progress: progress * 100, message: `Extracting video data...` },
         });
     });
-    await ffmpeg.load({ coreURL: FFMPEG_CORE_URL, wasmURL: FFMPEG_WASM_URL });
+    
+    log('Loading FFmpeg core from /public/ffmpeg folder...');
+    await ffmpeg.load({
+        coreURL: FFMPEG_CORE_URL,
+        wasmURL: FFMPEG_WASM_URL,
+    });
+    log('FFmpeg core loaded.');
+
     return ffmpeg;
 }
 
-self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisRequest }>) => {
-    if (event.data.type !== 'ANALYZE') return;
+// FIX: Define types for incoming messages to handle initialization and analysis requests.
+type WorkerInitMessage = {
+    type: 'INIT',
+    payload: {
+        opencvJsUrl: string;
+        opencvWasmUrl: string;
+    }
+};
+type AnalysisWorkerRequest = {
+    type: 'ANALYZE',
+    payload: AnalysisRequest
+}
 
-    const { file, duration, options, id } = event.data.payload;
+self.onmessage = async (event: MessageEvent<WorkerInitMessage | AnalysisWorkerRequest>) => {
+    const { type, payload } = event.data;
+
+    // FIX: Handle the initialization message to store the asset URLs.
+    if (type === 'INIT') {
+        OPENCV_JS_URL = payload.opencvJsUrl;
+        OPENCV_WASM_URL = payload.opencvWasmUrl;
+        log(`Worker initialized. OpenCV JS URL: ${OPENCV_JS_URL}, WASM URL: ${OPENCV_WASM_URL}`);
+        return;
+    }
+
+    if (type !== 'ANALYZE') return;
+
+    const { file, duration, options, id } = payload as AnalysisRequest;
     log(`Received job with id: ${id}`, id);
     try {
         
@@ -95,7 +122,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         const ffmpegInstance = await getFfmpeg();
         await ffmpegInstance.writeFile('input.vid', await fetchFile(file));
 
-        // Get video dimensions
         log('Reading video metadata for dimensions...', id);
         const infoCmd = ['-i', 'input.vid', '-hide_banner'];
         let infoStr = '';
@@ -104,7 +130,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         await ffmpegInstance.exec(infoCmd);
         ffmpegInstance.off('log', infoLogger); // Clear logger
         
-        // FIX: Replaced fragile regex with a more robust one to correctly parse video dimensions from ffmpeg's output.
         const dimMatch = infoStr.match(/Stream.*Video:.*,.*?(\d{2,5})x(\d{2,5})/);
         
         if (!dimMatch) throw new Error("Could not determine video dimensions.");
@@ -150,7 +175,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         const loopRange = numFrames - minFrameDist;
 
         for (let i = 0; i < loopRange; i++) {
-             // FIX: Improved progress reporting by making the message more descriptive during the longest phase of analysis.
             const progress = 60 + 30 * (i / loopRange);
             postMessage({ type: 'PROGRESS', payload: { progress, message: `Analyzing similarity (${i + 1}/${loopRange})...`, id } });
 
@@ -158,13 +182,10 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
                 const frame1 = frameData[i];
                 const frame2 = frameData[j];
 
-                // Histogram comparison
                 const histDiff = cv.compareHist(frame1.hist, frame2.hist, cv.HISTCMP_BHATTACHARYYA);
                 
-                // SSIM-like comparison (simple version)
                 const ssimScore = simpleSsim(frame1.gray, frame2.gray);
                 
-                // Optical Flow
                 const flow = new cv.Mat();
                 cv.calcOpticalFlowFarneback(frame1.gray, frame2.gray, flow, 0.5, 3, 15, 3, 5, 1.2, 0);
                 const flowMagnitude = cv.norm(flow, cv.NORM_L2);
@@ -192,7 +213,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         candidates.sort((a, b) => b.score - a.score);
         const topCandidates = candidates.slice(0, 10);
         
-        // Cleanup
         log('Cleaning up OpenCV and FFmpeg memory...', id);
         frameData.forEach(data => { data.gray.delete(); data.hist.delete(); });
         for (const f of frameFiles) await ffmpegInstance.deleteFile(f);
@@ -214,9 +234,25 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: AnalysisReq
         postMessage({ type: 'RESULT', payload: result });
 
     } catch (e: any) {
-        console.error(e);
-        log(`CRITICAL ERROR: ${e.message}`, id);
-        postMessage({ type: 'ERROR', payload: { message: e.message || 'Analysis failed.', id } });
+        console.error("Analysis worker caught an error:", e);
+        
+        let errorMessage = 'An unknown error occurred during analysis.';
+        if (e instanceof Error) {
+            errorMessage = e.message;
+        } else if (typeof e === 'string') {
+            errorMessage = e;
+        } else if (e && typeof e.message === 'string') {
+            errorMessage = e.message;
+        } else {
+            try {
+                errorMessage = `A non-standard error occurred: ${JSON.stringify(e)}`;
+            } catch {
+                errorMessage = 'An unserializable, non-standard error occurred.';
+            }
+        }
+
+        log(`CRITICAL ERROR: ${errorMessage}`, id);
+        postMessage({ type: 'ERROR', payload: { message: errorMessage, id } });
     }
 };
 
@@ -233,7 +269,6 @@ function simpleSsim(mat1: any, mat2: any): number {
     const covarMat = new cv.Mat();
     const meanMat = new cv.Mat();
     cv.calcCovarMatrix(mat1, mat2, covarMat, meanMat, cv.COVAR_NORMAL | cv.COVAR_ROWS);
-    // FIX: Correctly access the covariance (index 1) from the covariance matrix, not the variance (index 0).
     const covariance = covarMat.data64F[1];
     covarMat.delete();
     meanMat.delete();

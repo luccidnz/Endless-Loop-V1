@@ -1,5 +1,5 @@
 {
-  "name": "Endless Loop",
+  "name": "Loop Forge",
   "description": "An intelligent video looping tool. Given any input video, the app finds the best loop points and outputs a seamlessly looping clip. It can synthesize or edit transitional frames to make it appear infinite.",
   "requestFramePermissions": []
 }

@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 
 interface FileDropzoneProps {
@@ -18,8 +18,28 @@ const FileDropzone: React.FC<FileDropzoneProps> = ({ onFileDrop }) => {
     multiple: false,
   });
 
+  const [showInfo, setShowInfo] = useState(true);
+
   return (
-    <div className="w-full h-full min-h-[50vh] flex items-center justify-center p-4">
+    <div className="w-full h-full min-h-[50vh] flex items-center justify-center p-4 flex-col">
+       {showInfo && (
+        <div className="w-full max-w-2xl bg-deep-purple/60 border border-glow-cyan/20 rounded-lg p-4 mb-6 relative backdrop-blur-sm animate-fadeIn">
+            <button onClick={() => setShowInfo(false)} className="absolute top-2 right-2 text-glow-cyan/50 hover:text-glow-cyan">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+            </button>
+            <h3 className="text-lg font-bold text-star-gold">Welcome to Loop Forge</h3>
+            <p className="text-sm text-glow-cyan/80 mt-1">
+                Transform any video into a seamless, infinite loop.
+            </p>
+            <ul className="text-xs text-glow-cyan/70 mt-2 list-disc list-inside space-y-1">
+                <li><span className="font-semibold">Upload:</span> Drop a video file to begin.</li>
+                <li><span className="font-semibold">Analyze:</span> We'll find the best looping points automatically.</li>
+                <li><span className="font-semibold">Render:</span> Choose your favorite loop and export it!</li>
+            </ul>
+        </div>
+      )}
       <div
         {...getRootProps()}
         className={`w-full max-w-2xl h-80 border-4 border-dashed rounded-3xl flex flex-col justify-center items-center transition-all duration-300 cursor-pointer relative overflow-hidden

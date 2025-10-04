@@ -22,6 +22,10 @@ type AppState = {
 
   renderOptions: Omit<RenderOptions, 'candidate' | 'resolution'>;
 
+  // AI Suggestions
+  suggestedTitles: string[];
+  isSuggestingTitles: boolean;
+
   // Actions
   setVideoFile: (file: File) => void;
   startAnalysis: () => void;
@@ -34,6 +38,9 @@ type AppState = {
   setRenderOption: <K extends keyof AppState['renderOptions']>(key: K, value: AppState['renderOptions'][K]) => void;
   reset: () => void;
   clearError: () => void;
+  startTitleSuggestion: () => void;
+  setTitleSuggestionSuccess: (titles: string[]) => void;
+  setTitleSuggestionError: (message: string) => void;
 };
 
 export const useLoopStore = create<AppState>((set, get) => ({
@@ -57,6 +64,9 @@ export const useLoopStore = create<AppState>((set, get) => ({
     crossfadeMs: 150,
     pingPong: false,
   },
+
+  suggestedTitles: [],
+  isSuggestingTitles: false,
 
   // Actions
   setVideoFile: (file) => {
@@ -124,7 +134,7 @@ export const useLoopStore = create<AppState>((set, get) => ({
   
   setRenderSuccess: (url) => {
     logger.info('Render succeeded.', { url });
-    set({ status: 'render_done', renderedVideoUrl: url })
+    set({ status: 'render_done', renderedVideoUrl: url, suggestedTitles: [] }) // Clear old titles
   },
 
   setRenderOption: (key, value) => {
@@ -158,6 +168,21 @@ export const useLoopStore = create<AppState>((set, get) => ({
       progress: 0,
       message: '',
       analysisJobId: null,
+      suggestedTitles: [],
+      isSuggestingTitles: false,
     });
+  },
+
+  startTitleSuggestion: () => {
+    logger.info('Title suggestion started.');
+    set({ isSuggestingTitles: true, suggestedTitles: [], message: 'Asking the AI for creative titles...' });
+  },
+  setTitleSuggestionSuccess: (titles) => {
+    logger.info('Title suggestion succeeded.', { titles });
+    set({ isSuggestingTitles: false, suggestedTitles: titles, message: '' });
+  },
+  setTitleSuggestionError: (message) => {
+    logger.error('Title suggestion failed.', { message });
+    set({ isSuggestingTitles: false, message: '' });
   },
 }));

@@ -1,14 +1,17 @@
+// The necessary FFmpeg files are now automatically handled.
+// FFmpeg is copied to /public/ffmpeg by the vite build process.
+
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import type { RenderRequest, RenderWorkerMessage, WorkerMessage } from '../types';
 
 let ffmpeg: FFmpeg | null = null;
 
-// Aligning with the importmap to ensure all ffmpeg assets come from the same origin.
-const FFMPEG_CORE_VERSION = '0.12.15';
-const FFMPEG_BASE_URL = `https://aistudiocdn.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
+// Local paths for external libraries
+const FFMPEG_BASE_URL = '/ffmpeg';
 const FFMPEG_CORE_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.js`;
 const FFMPEG_WASM_URL = `${FFMPEG_BASE_URL}/ffmpeg-core.wasm`;
+
 
 function log(message: string) {
     self.postMessage({ type: 'LOG', payload: { message } });
@@ -23,7 +26,14 @@ async function getFfmpeg(): Promise<FFmpeg> {
             payload: { progress: progress * 100, message: `Rendering video...` },
         });
     });
-    await ffmpeg.load({ coreURL: FFMPEG_CORE_URL, wasmURL: FFMPEG_WASM_URL });
+
+    log('Loading FFmpeg core from /public/ffmpeg folder...');
+    await ffmpeg.load({
+        coreURL: FFMPEG_CORE_URL,
+        wasmURL: FFMPEG_WASM_URL,
+    });
+    log('FFmpeg core loaded.');
+
     return ffmpeg;
 }
 
@@ -71,7 +81,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
           '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'fast', '-an',
           outputFilename
       ];
-    // FIX: Removed redundant `format !== 'gif'` check. The type error occurred because this code is in an `else` branch where `format` is never 'gif', making the check unnecessary.
     } else if (renderMode === 'flow_morph' && crossfadeSec > 0) {
        const loopDuration = durationSec - crossfadeSec;
        const transitionTrimStart = crossfadeSec / 2;
@@ -89,7 +98,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
         '-map', '[v_out]', '-c:v', 'libx264', '-preset', 'medium', '-an',
         outputFilename
        ];
-    // FIX: Removed redundant `format !== 'gif'` check. The type error occurred because this code is in an `else` branch where `format` is never 'gif', making the check unnecessary.
     } else if (renderMode === 'crossfade' && crossfadeSec > 0) {
         const fadeOffset = durationSec - crossfadeSec;
         command = [
@@ -111,7 +119,6 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
           outputFilename
       ];
 
-      // If format requires re-encoding (not a simple copy)
       if (format !== 'mp4' && format !== 'webm') {
         command = [
             '-i', 'input.vid',
@@ -125,6 +132,24 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
         ];
       }
     }
+
+    // Set up a context-aware progress handler
+    // @ts-ignore - a bit hacky, but the only way to clear the existing listener
+    ffmpeg.onprogress = null;
+
+    let renderMessage = 'Rendering your masterpiece...';
+    if (format === 'gif') renderMessage = 'Generating high-quality GIF...';
+    if (pingPong) renderMessage = 'Creating ping-pong loop...';
+    if (renderMode === 'crossfade') renderMessage = 'Applying smooth crossfade...';
+    if (renderMode === 'flow_morph') renderMessage = 'Performing advanced motion blending... (this can take a minute)';
+    
+    ffmpeg.on('progress', ({ progress }) => {
+        postMessage({
+            type: 'PROGRESS',
+            payload: { progress: progress * 100, message: renderMessage },
+        });
+    });
+
 
     postMessage({ type: 'PROGRESS', payload: { progress: 10, message: 'Executing render command...' } });
     log(`Executing FFmpeg command: ffmpeg ${command.join(' ')}`);
@@ -149,12 +174,28 @@ self.onmessage = async (event: MessageEvent<{ type: string, payload: RenderReque
     });
 
   } catch (e: any) {
-    console.error(e);
-    log(`CRITICAL ERROR: ${e.message}`);
-    postMessage({ type: 'ERROR', payload: { message: e.message || 'Render failed.' } });
+    console.error("Render worker caught an error:", e);
+    
+    let errorMessage = 'An unknown error occurred during render.';
+    if (e instanceof Error) {
+        errorMessage = e.message;
+    } else if (typeof e === 'string') {
+        errorMessage = e;
+    } else if (e && typeof e.message === 'string') {
+        errorMessage = e.message;
+    } else {
+        try {
+            errorMessage = `A non-standard error occurred: ${JSON.stringify(e)}`;
+        } catch {
+            errorMessage = 'An unserializable, non-standard error occurred.';
+        }
+    }
+
+    log(`CRITICAL ERROR: ${errorMessage}`);
+    postMessage({ type: 'ERROR', payload: { message: errorMessage } });
   }
 };
 
-function postMessage(message: WorkerMessage<{ blob: Blob, url: string }>) {
+function postMessage(message: WorkerMessage<{ blob: Blob, url:string }>) {
     self.postMessage(message);
 }

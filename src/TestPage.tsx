@@ -73,7 +73,7 @@ export const TestPage: React.FC = () => {
 
     return (
         <div className="bg-cosmic-blue text-glow-cyan min-h-screen p-8 font-sans">
-            <h1 className="text-4xl font-bold mb-2 text-star-gold">Endless Loop - Test Suite</h1>
+            <h1 className="text-4xl font-bold mb-2 text-star-gold">Loop Forge - Test Suite</h1>
             <p className="mb-6 text-glow-cyan/80">
               Ensure you have placed `sample1.mp4` and `sample2.mp4` in the `/public/samples/` directory.
             </p>

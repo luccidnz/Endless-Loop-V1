@@ -1,12 +1,15 @@
-// FIX: Correctly augment the global `ImportMeta` type to provide type definitions
-// for `import.meta.env`. Using `declare global` is necessary because this file is
-// a module, and this ensures the type augmentation applies globally.
+// FIX: Manually define Vite's `import.meta.env` types to resolve "Cannot find type definition file for 'vite/client'"
+// and subsequent errors about `import.meta.env` not existing. This is a workaround for a broken tsconfig/environment.
 declare global {
   interface ImportMeta {
-    readonly env: {
-      readonly DEV: boolean;
-      // Add other environment variables here if needed
-    };
+    readonly env: ImportMetaEnv;
+  }
+  interface ImportMetaEnv {
+    readonly VITE_API_KEY: string;
+    readonly DEV: boolean;
+    readonly PROD: boolean;
+    readonly MODE: string;
+    readonly BASE_URL: string;
   }
 }
 
@@ -22,16 +25,20 @@ import { AnalysisWorkerMessage, RenderWorkerMessage, RenderOptions, AnalysisRequ
 import { logger } from './lib/logger';
 import { DiagnosticsPanel } from './components/DiagnosticsPanel';
 
+// FIX: Import asset URLs directly using Vite's `?url` syntax.
+// This allows Vite to manage the asset paths, ensuring they are always correct.
+import opencvJsUrl from '/opencv.js?url';
+import opencvWasmUrl from '/opencv.wasm?url';
+
 function App() {
   const { 
     videoFile, videoDuration, status, setVideoFile, startAnalysis,
     setAnalysisSuccess, setError, setProgress, startRender,
-    setRenderSuccess, selectedCandidate, analysisResult, renderOptions
+    setRenderSuccess, selectedCandidate, analysisResult, renderOptions,
+    isSuggestingTitles
   } = useLoopStore();
 
-  // FIX: Initialized useRef with null to resolve "Expected 1 arguments, but got 0." error.
   const analysisWorkerRef = useRef<Worker | null>(null);
-  // FIX: Initialized useRef with null to resolve "Expected 1 arguments, but got 0." error.
   const renderWorkerRef = useRef<Worker | null>(null);
 
   useEffect(() => {
@@ -39,10 +46,19 @@ function App() {
     analysisWorkerRef.current = new Worker(new URL('./workers/analysis.worker.ts', import.meta.url), { type: 'module' });
     renderWorkerRef.current = new Worker(new URL('./workers/render.worker.ts', import.meta.url), { type: 'module' });
 
+    // FIX: Send an initialization message to the worker with the correct asset URLs.
+    // This decouples the worker from hardcoded paths and makes asset loading robust.
+    analysisWorkerRef.current.postMessage({
+        type: 'INIT',
+        payload: {
+            opencvJsUrl,
+            opencvWasmUrl
+        }
+    });
+
     analysisWorkerRef.current.onmessage = (event: MessageEvent<AnalysisWorkerMessage>) => {
       const { type, payload } = event.data;
       
-      // FIX: Ignore messages from old, irrelevant analysis jobs to prevent race conditions.
       const currentJobId = useLoopStore.getState().analysisJobId;
       if (payload.id && currentJobId && payload.id !== currentJobId) {
         logger.warn(`Ignoring stale worker message from job ${payload.id}. Current job is ${currentJobId}`);
@@ -93,7 +109,6 @@ function App() {
   const handleAnalyze = () => {
     if (videoFile && videoDuration && status !== 'analyzing') {
       startAnalysis();
-      // Get the unique ID for the new job from the store state.
       const currentJobId = useLoopStore.getState().analysisJobId;
       const request: AnalysisRequest = {
         file: videoFile,
@@ -120,14 +135,14 @@ function App() {
     }
   }
   
-  const isLoading = useMemo(() => status === 'analyzing' || status === 'rendering', [status]);
+  const isLoading = useMemo(() => status === 'analyzing' || status === 'rendering' || isSuggestingTitles, [status, isSuggestingTitles]);
   const loadingMessage = useLoopStore((s) => s.message);
 
   return (
     <div className="bg-cosmic-blue text-glow-cyan min-h-screen font-sans flex flex-col items-center p-4 md:p-8 from-deep-purple bg-gradient-to-br">
       <header className="w-full max-w-7xl text-center mb-8">
         <h1 className="text-4xl md:text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-star-gold to-glow-cyan animate-subtleGlow">
-          Celestial Flow
+          Loop Forge
         </h1>
         <p className="text-glow-cyan/80 mt-2">
           Discover the infinite rhythm within your videos.
